@@ -83,7 +83,7 @@ public class TestHddsClientUtils {
   }
 
   @Test
-  public void testGetOmAddress() {
+  public void testgetOmSocketAddress() {
     final Configuration conf = new OzoneConfiguration();
 
     // First try a client address with just a host name. Verify it falls
