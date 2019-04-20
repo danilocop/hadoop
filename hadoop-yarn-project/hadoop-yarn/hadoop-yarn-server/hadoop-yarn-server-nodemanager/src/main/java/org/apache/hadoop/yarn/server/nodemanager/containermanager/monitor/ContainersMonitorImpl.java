@@ -468,8 +468,8 @@ public class ContainersMonitorImpl extends AbstractService implements
             tmp.append(p.getPID());
             tmp.append(" ");
           }
-          LOG.debug("Current ProcessTree list : "
-              + tmp.substring(0, tmp.length()) + "]");
+          LOG.debug("Current ProcessTree list : {}",
+              tmp.substring(0, tmp.length()) + "]");
         }
 
         // Temporary structure to calculate the total resource utilization of
@@ -495,10 +495,8 @@ public class ContainersMonitorImpl extends AbstractService implements
             if (pId == null || !isResourceCalculatorAvailable()) {
               continue; // processTree cannot be tracked
             }
-            if (LOG.isDebugEnabled()) {
-              LOG.debug("Constructing ProcessTree for : PID = " + pId
-                  + " ContainerId = " + containerId);
-            }
+            LOG.debug("Constructing ProcessTree for : PID = {}"
+                +" ContainerId = {}", pId, containerId);
             ResourceCalculatorProcessTree pTree = ptInfo.getProcessTree();
             pTree.updateProcessTree();    // update process-tree
             long currentVmemUsage = pTree.getVirtualMemorySize();
@@ -533,16 +531,14 @@ public class ContainersMonitorImpl extends AbstractService implements
           } catch (Exception e) {
             // Log the exception and proceed to the next container.
             LOG.warn("Uncaught exception in ContainersMonitorImpl "
-                + "while monitoring resource of " + containerId, e);
+                + "while monitoring resource of {}", containerId, e);
           }
         }
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Total Resource Usage stats in NM by all containers : "
-              + "Virtual Memory= " + vmemUsageByAllContainers
-              + ", Physical Memory= " + pmemByAllContainers
-              + ", Total CPU usage(% per core)= "
-              + cpuUsagePercentPerCoreByAllContainers);
-        }
+        LOG.debug("Total Resource Usage stats in NM by all containers : "
+            + "Virtual Memory= {}, Physical Memory= {}, "
+            + "Total CPU usage(% per core)= {}", vmemUsageByAllContainers,
+            pmemByAllContainers, cpuUsagePercentPerCoreByAllContainers);
+
 
         // Save the aggregated utilization of the containers
         setContainersUtilization(trackedContainersUtilization);
@@ -587,9 +583,7 @@ public class ContainersMonitorImpl extends AbstractService implements
         if (pId != null) {
           // pId will be null, either if the container is not spawned yet
           // or if the container's pid is removed from ContainerExecutor
-          if (LOG.isDebugEnabled()) {
-            LOG.debug("Tracking ProcessTree " + pId + " for the first time");
-          }
+          LOG.debug("Tracking ProcessTree {} for the first time", pId);
           ResourceCalculatorProcessTree pt =
               getResourceCalculatorProcessTree(pId);
           ptInfo.setPid(pId);
@@ -616,6 +610,8 @@ public class ContainersMonitorImpl extends AbstractService implements
               LOG.info("Can not get both ip and hostname: "
                   + Arrays.toString(ipAndHost));
             }
+            String exposedPorts = containerExecutor.getExposedPorts(container);
+            container.setExposedPorts(exposedPorts);
           } else {
             LOG.info(containerId + " is missing. Not setting ip and hostname");
           }
@@ -861,10 +857,12 @@ public class ContainersMonitorImpl extends AbstractService implements
           vmemLimitMBs, pmemLimitMBs, cpuVcores);
       break;
     case STOP_MONITORING_CONTAINER:
+      ContainerStopMonitoringEvent stopEvent =
+          (ContainerStopMonitoringEvent) monitoringEvent;
       usageMetrics = ContainerMetrics.getContainerMetrics(
           containerId);
       if (usageMetrics != null) {
-        usageMetrics.finished();
+        usageMetrics.finished(stopEvent.isForReInit());
       }
       break;
     case CHANGE_MONITORING_CONTAINER_RESOURCE:

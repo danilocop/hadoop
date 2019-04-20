@@ -29,6 +29,7 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.UUID;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
@@ -55,7 +56,8 @@ public class TestContainerDataYaml {
     String containerPath = containerID + ".container";
 
     KeyValueContainerData keyValueContainerData = new KeyValueContainerData(
-        containerID, MAXSIZE);
+        containerID, MAXSIZE, UUID.randomUUID().toString(),
+        UUID.randomUUID().toString());
     keyValueContainerData.setContainerDBType("RocksDB");
     keyValueContainerData.setMetadataPath(testRoot);
     keyValueContainerData.setChunksPath(testRoot);
@@ -136,15 +138,14 @@ public class TestContainerDataYaml {
       KeyValueContainerData kvData = (KeyValueContainerData) ContainerDataYaml
           .readContainerFile(file);
       fail("testIncorrectContainerFile failed");
-    } catch (IllegalStateException ex) {
-      GenericTestUtils.assertExceptionContains("Unexpected " +
-          "ContainerLifeCycleState", ex);
+    } catch (IllegalArgumentException ex) {
+      GenericTestUtils.assertExceptionContains("No enum constant", ex);
     }
   }
 
 
   @Test
-  public void testCheckBackWardCompatabilityOfContainerFile() throws
+  public void testCheckBackWardCompatibilityOfContainerFile() throws
       IOException {
     // This test is for if we upgrade, and then .container files added by new
     // server will have new fields added to .container file, after a while we
@@ -176,7 +177,7 @@ public class TestContainerDataYaml {
 
     } catch (Exception ex) {
       ex.printStackTrace();
-      fail("testCheckBackWardCompatabilityOfContainerFile failed");
+      fail("testCheckBackWardCompatibilityOfContainerFile failed");
     }
   }
 

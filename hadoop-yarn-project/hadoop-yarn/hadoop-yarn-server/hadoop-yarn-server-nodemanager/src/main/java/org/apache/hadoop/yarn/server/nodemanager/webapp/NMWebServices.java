@@ -24,13 +24,17 @@ import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.security.Principal;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.records.AuxServiceRecord;
+import org.apache.hadoop.yarn.server.nodemanager.containermanager.records.AuxServiceRecords;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.resourceplugin.ResourcePlugin;
 import org.apache.hadoop.yarn.server.nodemanager.containermanager.resourceplugin.ResourcePluginManager;
+import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.AuxiliaryServicesInfo;
 import org.apache.hadoop.yarn.server.nodemanager.webapp.dao.NMResourceInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -324,9 +328,7 @@ public class NMWebServices {
       } catch (IOException ex) {
         // Something wrong with we tries to access the remote fs for the logs.
         // Skip it and do nothing
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(ex.getMessage());
-        }
+        LOG.debug("{}", ex);
       }
       GenericEntity<List<ContainerLogsInfo>> meta = new GenericEntity<List<
           ContainerLogsInfo>>(containersLogsInfo){};
@@ -429,10 +431,8 @@ public class NMWebServices {
     } catch (Exception ex) {
       // This NM does not have this container any more. We
       // assume the container has already finished.
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Can not find the container:" + containerId
-            + " in this node.");
-      }
+      LOG.debug("Can not find the container:{} in this node.",
+          containerId);
     }
     final boolean isRunning = tempIsRunning;
     File logFile = null;
@@ -556,6 +556,52 @@ public class NMWebServices {
     return new NMResourceInfo();
   }
 
+  @GET
+  @Path("/auxiliaryservices")
+  @Produces({ MediaType.APPLICATION_JSON + "; " + JettyUtils.UTF_8,
+      MediaType.APPLICATION_XML + "; " + JettyUtils.UTF_8 })
+  public AuxiliaryServicesInfo getAuxiliaryServices(@javax.ws.rs.core.Context
+      HttpServletRequest hsr) {
+    init();
+    if (!this.nmContext.getAuxServices().isManifestEnabled()) {
+      throw new BadRequestException("Auxiliary services manifest is not " +
+          "enabled");
+    }
+    AuxiliaryServicesInfo auxiliaryServices = new AuxiliaryServicesInfo();
+    Collection<AuxServiceRecord> loadedServices = nmContext.getAuxServices()
+        .getServiceRecords();
+    if (loadedServices != null) {
+      auxiliaryServices.addAll(loadedServices);
+    }
+    return auxiliaryServices;
+  }
+
+  @PUT
+  @Path("/auxiliaryservices")
+  @Produces({ MediaType.APPLICATION_JSON + "; " + JettyUtils.UTF_8,
+      MediaType.APPLICATION_XML + "; " + JettyUtils.UTF_8 })
+  public Response putAuxiliaryServices(@javax.ws.rs.core.Context
+      HttpServletRequest req, AuxServiceRecords services) {
+    init();
+    if (!this.nmContext.getAuxServices().isManifestEnabled()) {
+      throw new BadRequestException("Auxiliary services manifest is not " +
+          "enabled");
+    }
+    if (!hasAdminAccess(req)) {
+      return Response.status(Status.FORBIDDEN).build();
+    }
+    if (services == null) {
+      return Response.status(Status.BAD_REQUEST).build();
+    }
+    try {
+      nmContext.getAuxServices().reload(services);
+    } catch (Exception e) {
+      LOG.error("Fail to reload auxiliary services, reason: ", e);
+      return Response.status(Status.INTERNAL_SERVER_ERROR).entity(e).build();
+    }
+    return Response.ok().build();
+  }
+
   @PUT
   @Path("/yarn/sysfs/{user}/{appId}")
   @Produces({ MediaType.APPLICATION_JSON + "; " + JettyUtils.UTF_8,
@@ -622,6 +668,21 @@ public class NMWebServices {
         .checkAccess(callerUGI, ApplicationAccessType.VIEW_APP, user, appId))) {
       return false;
     }
+    return true;
+  }
+
+  protected Boolean hasAdminAccess(HttpServletRequest hsr) {
+    // Check for the authorization.
+    UserGroupInformation callerUGI = getCallerUserGroupInformation(hsr, true);
+
+    if (callerUGI == null) {
+      return false;
+    }
+
+    if (!this.nmContext.getApplicationACLsManager().isAdmin(callerUGI)) {
+      return false;
+    }
+
     return true;
   }
 

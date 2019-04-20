@@ -41,6 +41,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -66,7 +67,7 @@ public class TestCloseContainerHandler {
     objectStore.getVolume("test").createBucket("test");
     OzoneOutputStream key = objectStore.getVolume("test").getBucket("test")
         .createKey("test", 1024, ReplicationType.STAND_ALONE,
-            ReplicationFactor.ONE);
+            ReplicationFactor.ONE, new HashMap<>());
     key.write("test".getBytes());
     key.close();
 
@@ -75,7 +76,9 @@ public class TestCloseContainerHandler {
         new OmKeyArgs.Builder().setVolumeName("test").setBucketName("test")
             .setType(HddsProtos.ReplicationType.STAND_ALONE)
             .setFactor(HddsProtos.ReplicationFactor.ONE).setDataSize(1024)
-            .setKeyName("test").build();
+            .setKeyName("test")
+            .setRefreshPipeline(true)
+            .build();
 
     OmKeyLocationInfo omKeyLocationInfo =
         cluster.getOzoneManager().lookupKey(keyArgs).getKeyLocationVersions()
@@ -95,8 +98,7 @@ public class TestCloseContainerHandler {
     //send the order to close the container
     cluster.getStorageContainerManager().getScmNodeManager()
         .addDatanodeCommand(datanodeDetails.getUuid(),
-            new CloseContainerCommand(containerId.getId(),
-                HddsProtos.ReplicationType.STAND_ALONE, pipeline.getId()));
+            new CloseContainerCommand(containerId.getId(), pipeline.getId()));
 
     GenericTestUtils.waitFor(() ->
             isContainerClosed(cluster, containerId.getId()),

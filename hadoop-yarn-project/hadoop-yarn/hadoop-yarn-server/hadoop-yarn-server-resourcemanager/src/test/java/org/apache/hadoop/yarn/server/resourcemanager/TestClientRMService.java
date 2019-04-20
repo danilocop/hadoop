@@ -18,13 +18,14 @@
 
 package org.apache.hadoop.yarn.server.resourcemanager;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.anyListOf;
-import static org.mockito.Matchers.anyString;
-import static org.mockito.Matchers.eq;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
@@ -51,8 +52,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.yarn.MockApps;
@@ -186,7 +187,8 @@ import com.google.common.collect.Sets;
 
 public class TestClientRMService {
 
-  private static final Log LOG = LogFactory.getLog(TestClientRMService.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(TestClientRMService.class);
 
   private RecordFactory recordFactory = RecordFactoryProvider
       .getRecordFactory(null);
@@ -558,7 +560,7 @@ public class TestClientRMService {
     QueueACLsManager mockQueueACLsManager = mock(QueueACLsManager.class);
     when(
         mockQueueACLsManager.checkAccess(any(UserGroupInformation.class),
-            any(QueueACL.class), any(RMApp.class), any(String.class),
+            any(QueueACL.class), any(RMApp.class), any(),
             any())).thenReturn(true);
     return new ClientRMService(rmContext, scheduler, appManager,
         mockAclsManager, mockQueueACLsManager, null);
@@ -806,11 +808,12 @@ public class TestClientRMService {
    */
   private ClientRMService createClientRMServiceForMoveApplicationRequest(
       ApplicationId applicationId, String appOwner,
-      ApplicationACLsManager appAclsManager, QueueACLsManager queueAclsManager)
-      throws IOException {
+      ApplicationACLsManager appAclsManager,
+      QueueACLsManager queueAclsManager) {
     RMApp app = mock(RMApp.class);
     when(app.getUser()).thenReturn(appOwner);
     when(app.getState()).thenReturn(RMAppState.RUNNING);
+    when(app.getApplicationId()).thenReturn(applicationId);
     ConcurrentHashMap<ApplicationId, RMApp> apps = new ConcurrentHashMap<>();
     apps.put(applicationId, app);
 
@@ -851,8 +854,8 @@ public class TestClientRMService {
         any(UserGroupInformation.class),
         any(QueueACL.class),
         any(RMApp.class),
-        any(String.class),
-        anyListOf(String.class))).thenAnswer(new Answer<Boolean>() {
+        any(),
+        any())).thenAnswer(new Answer<Boolean>() {
             @Override
             public Boolean answer(InvocationOnMock invocationOnMock) {
               final UserGroupInformation user =
@@ -868,8 +871,8 @@ public class TestClientRMService {
         any(UserGroupInformation.class),
         any(QueueACL.class),
         any(RMApp.class),
-        any(String.class),
-        anyListOf(String.class),
+        any(),
+        any(),
         any(String.class))).thenAnswer(new Answer<Boolean>() {
           @Override
           public Boolean answer(InvocationOnMock invocationOnMock) {
@@ -896,14 +899,14 @@ public class TestClientRMService {
         any(QueueACL.class),
         any(RMApp.class),
         any(String.class),
-        anyListOf(String.class),
+        anyList(),
         any(String.class))).thenReturn(false);
     when(queueACLsManager.checkAccess(
         any(UserGroupInformation.class),
         any(QueueACL.class),
         any(RMApp.class),
         any(String.class),
-        anyListOf(String.class))).thenReturn(true);
+        anyList())).thenReturn(true);
     return queueACLsManager;
   }
 
@@ -920,7 +923,7 @@ public class TestClientRMService {
         any()))
         .thenReturn(true);
     when(mockAclsManager.checkAccess(any(UserGroupInformation.class),
-        any(ApplicationAccessType.class), anyString(),
+        any(ApplicationAccessType.class), any(),
         any(ApplicationId.class))).thenReturn(true);
 
     ClientRMService rmService = new ClientRMService(rmContext, scheduler,
@@ -1105,7 +1108,7 @@ public class TestClientRMService {
     ApplicationACLsManager mockAclsManager = mock(ApplicationACLsManager.class);
     QueueACLsManager mockQueueACLsManager = mock(QueueACLsManager.class);
     when(mockQueueACLsManager.checkAccess(any(UserGroupInformation.class),
-        any(QueueACL.class), any(RMApp.class), any(String.class),
+        any(QueueACL.class), any(RMApp.class), any(),
         any()))
         .thenReturn(true);
     ClientRMService rmService =
@@ -1449,7 +1452,8 @@ public class TestClientRMService {
     RMAppAttemptImpl rmAppAttemptImpl = spy(new RMAppAttemptImpl(attemptId,
         rmContext, yarnScheduler, null, asContext, config, null, app));
     Container container = Container.newInstance(
-        ContainerId.newContainerId(attemptId, 1), null, "", null, null, null);
+        ContainerId.newContainerId(attemptId, 1), null,
+        "", null, null, null);
     RMContainerImpl containerimpl = spy(new RMContainerImpl(container,
         SchedulerRequestKey.extractFrom(container), attemptId, null, "",
         rmContext));
@@ -1785,7 +1789,7 @@ public class TestClientRMService {
 
     // Ensure all reservations are filtered out.
     Assert.assertNotNull(response);
-    Assert.assertEquals(response.getReservationAllocationState().size(), 0);
+    assertThat(response.getReservationAllocationState()).isEmpty();
 
     duration = 30000;
     deadline = sRequest.getReservationDefinition().getDeadline();
@@ -1805,7 +1809,7 @@ public class TestClientRMService {
 
     // Ensure all reservations are filtered out.
     Assert.assertNotNull(response);
-    Assert.assertEquals(response.getReservationAllocationState().size(), 0);
+    assertThat(response.getReservationAllocationState()).isEmpty();
 
     arrival = clock.getTime();
     // List reservations, search by end time before the reservation start
@@ -1823,7 +1827,7 @@ public class TestClientRMService {
 
     // Ensure all reservations are filtered out.
     Assert.assertNotNull(response);
-    Assert.assertEquals(response.getReservationAllocationState().size(), 0);
+    assertThat(response.getReservationAllocationState()).isEmpty();
 
     // List reservations, search by very small end time.
     request = ReservationListRequest
@@ -1838,7 +1842,7 @@ public class TestClientRMService {
 
     // Ensure all reservations are filtered out.
     Assert.assertNotNull(response);
-    Assert.assertEquals(response.getReservationAllocationState().size(), 0);
+    assertThat(response.getReservationAllocationState()).isEmpty();
 
     rm.stop();
   }
@@ -2009,7 +2013,7 @@ public class TestClientRMService {
         Arrays.asList(node1A)));
     Assert.assertTrue(labelsToNodes.get(labelZ.getName()).containsAll(
         Arrays.asList(node1B, node3B)));
-    Assert.assertEquals(labelsToNodes.get(labelY.getName()), null);
+    assertThat(labelsToNodes.get(labelY.getName())).isNull();
 
     rpc.stopProxy(client, conf);
     rm.close();
@@ -2110,10 +2114,10 @@ public class TestClientRMService {
         client.getAttributesToNodes(request);
     Map<NodeAttributeKey, List<NodeToAttributeValue>> attrs =
         response.getAttributesToNodes();
-    Assert.assertEquals(response.getAttributesToNodes().size(), 4);
-    Assert.assertEquals(attrs.get(dist.getAttributeKey()).size(), 2);
-    Assert.assertEquals(attrs.get(os.getAttributeKey()).size(), 1);
-    Assert.assertEquals(attrs.get(gpu.getAttributeKey()).size(), 1);
+    assertThat(response.getAttributesToNodes()).hasSize(4);
+    assertThat(attrs.get(dist.getAttributeKey())).hasSize(2);
+    assertThat(attrs.get(os.getAttributeKey())).hasSize(1);
+    assertThat(attrs.get(gpu.getAttributeKey())).hasSize(1);
     Assert.assertTrue(findHostnameAndValInMapping(node1, "3_0_2",
         attrs.get(dist.getAttributeKey())));
     Assert.assertTrue(findHostnameAndValInMapping(node2, "3_0_2",
@@ -2127,7 +2131,7 @@ public class TestClientRMService {
         client.getAttributesToNodes(request2);
     Map<NodeAttributeKey, List<NodeToAttributeValue>> attrs2 =
         response2.getAttributesToNodes();
-    Assert.assertEquals(attrs2.size(), 1);
+    assertThat(attrs2).hasSize(1);
     Assert.assertTrue(findHostnameAndValInMapping(node2, "docker0",
         attrs2.get(docker.getAttributeKey())));
 
@@ -2138,7 +2142,7 @@ public class TestClientRMService {
         client.getAttributesToNodes(request3);
     Map<NodeAttributeKey, List<NodeToAttributeValue>> attrs3 =
         response3.getAttributesToNodes();
-    Assert.assertEquals(attrs3.size(), 2);
+    assertThat(attrs3).hasSize(2);
     Assert.assertTrue(findHostnameAndValInMapping(node1, "windows64",
         attrs3.get(os.getAttributeKey())));
     Assert.assertTrue(findHostnameAndValInMapping(node2, "docker0",
@@ -2449,7 +2453,7 @@ public class TestClientRMService {
     QueueACLsManager queueAclsManager = mock(QueueACLsManager.class);
     when(queueAclsManager.checkAccess(any(UserGroupInformation.class),
         any(QueueACL.class), any(RMApp.class), any(String.class),
-        anyListOf(String.class))).thenReturn(false);
+        anyList())).thenReturn(false);
 
     // Simulate app ACL manager which returns false always
     ApplicationACLsManager appAclsManager = mock(ApplicationACLsManager.class);

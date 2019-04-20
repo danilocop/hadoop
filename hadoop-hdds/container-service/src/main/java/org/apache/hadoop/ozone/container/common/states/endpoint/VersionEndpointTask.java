@@ -86,7 +86,8 @@ public class VersionEndpointTask implements
           Preconditions.checkNotNull(clusterId, "Reply from SCM: clusterId " +
               "cannot be null");
 
-          // If version file does not exist create version file and also set scmId
+          // If version file does not exist
+          // create version file and also set scmId
 
           for (Map.Entry<String, HddsVolume> entry : volumeMap.entrySet()) {
             HddsVolume hddsVolume = entry.getValue();
@@ -105,7 +106,8 @@ public class VersionEndpointTask implements
           volumeSet.writeUnlock();
         }
 
-        ozoneContainer.getDispatcher().setScmId(scmId);
+        // Start the container services after getting the version information
+        ozoneContainer.start(scmId);
 
         EndpointStateMachine.EndPointStates nextState =
             rpcEndPoint.getState().getNextState();

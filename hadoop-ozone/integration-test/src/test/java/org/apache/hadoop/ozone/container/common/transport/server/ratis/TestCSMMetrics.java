@@ -49,8 +49,9 @@ import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 
 import static org.apache.ratis.rpc.SupportedRpcType.GRPC;
 import org.apache.ratis.protocol.RaftGroupId;
-import org.apache.ratis.util.CheckedBiConsumer;
+import org.apache.ratis.util.function.CheckedBiConsumer;
 
+import java.util.Set;
 import java.util.function.BiConsumer;
 
 import org.junit.Test;
@@ -157,7 +158,7 @@ public class TestCSMMetrics {
 
     final ContainerDispatcher dispatcher = new TestContainerDispatcher();
     return XceiverServerRatis.newXceiverServerRatis(dn, conf, dispatcher,
-        null);
+        null, null);
   }
 
   private static class TestContainerDispatcher implements ContainerDispatcher {
@@ -169,7 +170,8 @@ public class TestCSMMetrics {
      */
     @Override
     public ContainerCommandResponseProto dispatch(
-        ContainerCommandRequestProto msg) {
+        ContainerCommandRequestProto msg,
+        DispatcherContext context) {
       return ContainerTestHelper.getCreateContainerResponse(msg);
     }
 
@@ -194,6 +196,10 @@ public class TestCSMMetrics {
     @Override
     public void setScmId(String scmId) {
 
+    }
+
+    @Override
+    public void buildMissingContainerSet(Set<Long> createdContainerSet) {
     }
   }
 }

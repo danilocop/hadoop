@@ -34,12 +34,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -522,7 +520,7 @@ public class BlockManager implements BlockStatsMXBean {
     this.redundancyRecheckIntervalMs = conf.getTimeDuration(
         DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_INTERVAL_SECONDS_KEY,
         DFSConfigKeys.DFS_NAMENODE_REDUNDANCY_INTERVAL_SECONDS_DEFAULT,
-        TimeUnit.SECONDS) * 1000;
+        TimeUnit.SECONDS, TimeUnit.MILLISECONDS);
 
     this.storageInfoDefragmentInterval =
       conf.getLong(
@@ -841,17 +839,22 @@ public class BlockManager implements BlockStatsMXBean {
       new ArrayList<DatanodeStorageInfo>();
     
     NumberReplicas numReplicas = new NumberReplicas();
+    BlockInfo blockInfo = getStoredBlock(block);
+    if (blockInfo == null) {
+      out.println("Block "+ block + " is Null");
+      return;
+    }
     // source node returned is not used
-    chooseSourceDatanodes(getStoredBlock(block), containingNodes,
+    chooseSourceDatanodes(blockInfo, containingNodes,
         containingLiveReplicasNodes, numReplicas,
-        new LinkedList<Byte>(), LowRedundancyBlocks.LEVEL);
+        new ArrayList<Byte>(), LowRedundancyBlocks.LEVEL);
     
     // containingLiveReplicasNodes can include READ_ONLY_SHARED replicas which are 
     // not included in the numReplicas.liveReplicas() count
     assert containingLiveReplicasNodes.size() >= numReplicas.liveReplicas();
     int usableReplicas = numReplicas.liveReplicas() +
                          numReplicas.decommissionedAndDecommissioning();
-    
+
     if (block instanceof BlockInfo) {
       BlockCollection bc = getBlockCollection((BlockInfo)block);
       String fileName = (bc == null) ? "[orphaned]" : bc.getName();
@@ -1481,9 +1484,13 @@ public class BlockManager implements BlockStatsMXBean {
    */
   public boolean isSufficientlyReplicated(BlockInfo b) {
     // Compare against the lesser of the minReplication and number of live DNs.
-    final int replication =
-        Math.min(minReplication, getDatanodeManager().getNumLiveDataNodes());
-    return countNodes(b).liveReplicas() >= replication;
+    final int liveReplicas = countNodes(b).liveReplicas();
+    if (liveReplicas >= minReplication) {
+      return true;
+    }
+    // getNumLiveDataNodes() is very expensive and we minimize its use by
+    // comparing with minReplication first.
+    return liveReplicas >= getDatanodeManager().getNumLiveDataNodes();
   }
 
   /** Get all blocks with location information from a datanode. */
@@ -1767,8 +1774,8 @@ public class BlockManager implements BlockStatsMXBean {
     this.shouldPostponeBlocksFromFuture  = postpone;
   }
 
-
-  private void postponeBlock(Block blk) {
+  @VisibleForTesting
+  void postponeBlock(Block blk) {
     postponedMisreplicatedBlocks.add(blk);
   }
   
@@ -1842,7 +1849,7 @@ public class BlockManager implements BlockStatsMXBean {
   int computeReconstructionWorkForBlocks(
       List<List<BlockInfo>> blocksToReconstruct) {
     int scheduledWork = 0;
-    List<BlockReconstructionWork> reconWork = new LinkedList<>();
+    List<BlockReconstructionWork> reconWork = new ArrayList<>();
 
     // Step 1: categorize at-risk blocks into replication and EC tasks
     namesystem.writeLock();
@@ -1864,14 +1871,10 @@ public class BlockManager implements BlockStatsMXBean {
     }
 
     // Step 2: choose target nodes for each reconstruction task
-    final Set<Node> excludedNodes = new HashSet<>();
-    for(BlockReconstructionWork rw : reconWork){
+    for (BlockReconstructionWork rw : reconWork) {
       // Exclude all of the containing nodes from being targets.
       // This list includes decommissioning or corrupt nodes.
-      excludedNodes.clear();
-      for (DatanodeDescriptor dn : rw.getContainingNodes()) {
-        excludedNodes.add(dn);
-      }
+      final Set<Node> excludedNodes = new HashSet<>(rw.getContainingNodes());
 
       // choose replication targets: NOT HOLDING THE GLOBAL LOCK
       final BlockPlacementPolicy placementPolicy =
@@ -1882,9 +1885,9 @@ public class BlockManager implements BlockStatsMXBean {
     // Step 3: add tasks to the DN
     namesystem.writeLock();
     try {
-      for(BlockReconstructionWork rw : reconWork){
+      for (BlockReconstructionWork rw : reconWork) {
         final DatanodeStorageInfo[] targets = rw.getTargets();
-        if(targets == null || targets.length == 0){
+        if (targets == null || targets.length == 0) {
           rw.resetTargets();
           continue;
         }
@@ -1901,13 +1904,12 @@ public class BlockManager implements BlockStatsMXBean {
 
     if (blockLog.isDebugEnabled()) {
       // log which blocks have been scheduled for reconstruction
-      for(BlockReconstructionWork rw : reconWork){
+      for (BlockReconstructionWork rw : reconWork) {
         DatanodeStorageInfo[] targets = rw.getTargets();
         if (targets != null && targets.length != 0) {
           StringBuilder targetList = new StringBuilder("datanode(s)");
           for (DatanodeStorageInfo target : targets) {
-            targetList.append(' ');
-            targetList.append(target.getDatanodeDescriptor());
+            targetList.append(' ').append(target.getDatanodeDescriptor());
           }
           blockLog.debug("BLOCK* ask {} to replicate {} to {}", rw.getSrcNodes(),
               rw.getBlock(), targetList);
@@ -2666,11 +2668,11 @@ public class BlockManager implements BlockStatsMXBean {
     // Modify the (block-->datanode) map, according to the difference
     // between the old and new block report.
     //
-    Collection<BlockInfoToAdd> toAdd = new LinkedList<>();
-    Collection<BlockInfo> toRemove = new TreeSet<>();
-    Collection<Block> toInvalidate = new LinkedList<>();
-    Collection<BlockToMarkCorrupt> toCorrupt = new LinkedList<>();
-    Collection<StatefulBlockInfo> toUC = new LinkedList<>();
+    Collection<BlockInfoToAdd> toAdd = new ArrayList<>();
+    Collection<BlockInfo> toRemove = new HashSet<>();
+    Collection<Block> toInvalidate = new ArrayList<>();
+    Collection<BlockToMarkCorrupt> toCorrupt = new ArrayList<>();
+    Collection<StatefulBlockInfo> toUC = new ArrayList<>();
 
     boolean sorted = false;
     String strBlockReportId = "";
@@ -4233,21 +4235,41 @@ public class BlockManager implements BlockStatsMXBean {
     if (!isPopulatingReplQueues()) {
       return;
     }
-    final Iterator<BlockInfo> it = srcNode.getBlockIterator();
+
     int numExtraRedundancy = 0;
-    while(it.hasNext()) {
-      final BlockInfo block = it.next();
-      if (block.isDeleted()) {
-        //Orphan block, will be handled eventually, skip
+    for (DatanodeStorageInfo datanodeStorageInfo : srcNode.getStorageInfos()) {
+      // the namesystem lock is released between iterations. Make sure the
+      // storage is not removed before continuing.
+      if (srcNode.getStorageInfo(datanodeStorageInfo.getStorageID()) == null) {
         continue;
       }
-      int expectedReplication = this.getExpectedRedundancyNum(block);
-      NumberReplicas num = countNodes(block);
-      if (shouldProcessExtraRedundancy(num, expectedReplication)) {
-        // extra redundancy block
-        processExtraRedundancyBlock(block, (short) expectedReplication, null,
-            null);
-        numExtraRedundancy++;
+      final Iterator<BlockInfo> it = datanodeStorageInfo.getBlockIterator();
+      while(it.hasNext()) {
+        final BlockInfo block = it.next();
+        if (block.isDeleted()) {
+          //Orphan block, will be handled eventually, skip
+          continue;
+        }
+        int expectedReplication = this.getExpectedRedundancyNum(block);
+        NumberReplicas num = countNodes(block);
+        if (shouldProcessExtraRedundancy(num, expectedReplication)) {
+          // extra redundancy block
+          processExtraRedundancyBlock(block, (short) expectedReplication, null,
+              null);
+          numExtraRedundancy++;
+        }
+      }
+      // When called by tests like TestDefaultBlockPlacementPolicy.
+      // testPlacementWithLocalRackNodesDecommissioned, it is not protected by
+      // lock, only when called by DatanodeManager.refreshNodes have writeLock
+      if (namesystem.hasWriteLock()) {
+        namesystem.writeUnlock();
+        try {
+          Thread.sleep(1);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        }
+        namesystem.writeLock();
       }
     }
     LOG.info("Invalidated {} extra redundancy blocks on {} after "

@@ -58,6 +58,7 @@ import org.slf4j.event.Level;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.List;
 import java.util.HashSet;
@@ -120,8 +121,7 @@ public class TestBlockDeletion {
   }
 
   @Test
-  public void testBlockDeletion()
-      throws IOException, InterruptedException, TimeoutException {
+  public void testBlockDeletion() throws Exception {
     String volumeName = UUID.randomUUID().toString();
     String bucketName = UUID.randomUUID().toString();
 
@@ -134,7 +134,7 @@ public class TestBlockDeletion {
     String keyName = UUID.randomUUID().toString();
 
     OzoneOutputStream out = bucket.createKey(keyName, value.getBytes().length,
-        ReplicationType.STAND_ALONE, ReplicationFactor.ONE);
+        ReplicationType.RATIS, ReplicationFactor.ONE, new HashMap<>());
     for (int i = 0; i < 100; i++) {
       out.write(value.getBytes());
     }
@@ -142,13 +142,15 @@ public class TestBlockDeletion {
 
     OmKeyArgs keyArgs = new OmKeyArgs.Builder().setVolumeName(volumeName)
         .setBucketName(bucketName).setKeyName(keyName).setDataSize(0)
-        .setType(HddsProtos.ReplicationType.STAND_ALONE)
-        .setFactor(HddsProtos.ReplicationFactor.ONE).build();
+        .setType(HddsProtos.ReplicationType.RATIS)
+        .setFactor(HddsProtos.ReplicationFactor.ONE)
+        .setRefreshPipeline(true)
+        .build();
     List<OmKeyLocationInfoGroup> omKeyLocationInfoGroupList =
         om.lookupKey(keyArgs).getKeyLocationVersions();
 
     // verify key blocks were created in DN.
-    Assert.assertTrue(verifyBlocksCreated(omKeyLocationInfoGroupList));
+    verifyBlocksCreated(omKeyLocationInfoGroupList);
     // No containers with deleted blocks
     Assert.assertTrue(containerIdsWithDeletedBlocks.isEmpty());
     // Delete transactionIds for the containers should be 0.
@@ -158,17 +160,21 @@ public class TestBlockDeletion {
     om.deleteKey(keyArgs);
     Thread.sleep(5000);
     // The blocks should not be deleted in the DN as the container is open
-    Assert.assertTrue(!verifyBlocksDeleted(omKeyLocationInfoGroupList));
+    try {
+      verifyBlocksDeleted(omKeyLocationInfoGroupList);
+      Assert.fail("Blocks should not have been deleted");
+    } catch (Throwable e) {
+      Assert.assertTrue(e.getMessage().contains("expected null, but was"));
+      Assert.assertEquals(e.getClass(), AssertionError.class);
+    }
 
     // close the containers which hold the blocks for the key
-    Assert
-        .assertTrue(
-            OzoneTestUtils.closeContainers(omKeyLocationInfoGroupList, scm));
+    OzoneTestUtils.closeContainers(omKeyLocationInfoGroupList, scm);
 
     waitForDatanodeCommandRetry();
     waitForDatanodeBlockDeletionStart();
     // The blocks should be deleted in the DN.
-    Assert.assertTrue(verifyBlocksDeleted(omKeyLocationInfoGroupList));
+    verifyBlocksDeleted(omKeyLocationInfoGroupList);
 
     // Few containers with deleted blocks
     Assert.assertTrue(!containerIdsWithDeletedBlocks.isEmpty());
@@ -216,9 +222,9 @@ public class TestBlockDeletion {
   private void verifyTransactionsCommitted() throws IOException {
     DeletedBlockLogImpl deletedBlockLog =
         (DeletedBlockLogImpl) scm.getScmBlockManager().getDeletedBlockLog();
-    for (int txnID = 1; txnID <= maxTransactionId; txnID++) {
+    for (long txnID = 1; txnID <= maxTransactionId; txnID++) {
       Assert.assertNull(
-          deletedBlockLog.getDeletedStore().get(Longs.toByteArray(txnID)));
+          scm.getScmMetadataStore().getDeletedBlocksTXTable().get(txnID));
     }
   }
 
@@ -288,44 +294,32 @@ public class TestBlockDeletion {
     }
   }
 
-  private boolean verifyBlocksCreated(
-      List<OmKeyLocationInfoGroup> omKeyLocationInfoGroups)
-      throws IOException {
+  private void verifyBlocksCreated(
+      List<OmKeyLocationInfoGroup> omKeyLocationInfoGroups) throws Exception {
     ContainerSet dnContainerSet =
         cluster.getHddsDatanodes().get(0).getDatanodeStateMachine()
             .getContainer().getContainerSet();
-    return OzoneTestUtils.performOperationOnKeyContainers((blockID) -> {
-      try {
-        MetadataStore db = BlockUtils.getDB((KeyValueContainerData)
-                dnContainerSet.getContainer(blockID.getContainerID())
-                    .getContainerData(), conf);
-        Assert.assertNotNull(db.get(Longs.toByteArray(blockID.getLocalID())));
-      } catch (IOException e) {
-        e.printStackTrace();
-      }
+    OzoneTestUtils.performOperationOnKeyContainers((blockID) -> {
+      MetadataStore db = BlockUtils.getDB((KeyValueContainerData) dnContainerSet
+          .getContainer(blockID.getContainerID()).getContainerData(), conf);
+      Assert.assertNotNull(db.get(Longs.toByteArray(blockID.getLocalID())));
     }, omKeyLocationInfoGroups);
   }
 
-  private boolean verifyBlocksDeleted(
-      List<OmKeyLocationInfoGroup> omKeyLocationInfoGroups)
-      throws IOException {
+  private void verifyBlocksDeleted(
+      List<OmKeyLocationInfoGroup> omKeyLocationInfoGroups) throws Exception {
     ContainerSet dnContainerSet =
         cluster.getHddsDatanodes().get(0).getDatanodeStateMachine()
             .getContainer().getContainerSet();
-    return OzoneTestUtils.performOperationOnKeyContainers((blockID) -> {
-      try {
-        MetadataStore db = BlockUtils.getDB((KeyValueContainerData)
-            dnContainerSet.getContainer(blockID.getContainerID())
-                .getContainerData(), conf);
-        Assert.assertNull(db.get(Longs.toByteArray(blockID.getLocalID())));
-        Assert.assertNull(db.get(DFSUtil.string2Bytes(
-            OzoneConsts.DELETING_KEY_PREFIX + blockID.getLocalID())));
-        Assert.assertNotNull(DFSUtil.string2Bytes(
-            OzoneConsts.DELETED_KEY_PREFIX + blockID.getLocalID()));
-        containerIdsWithDeletedBlocks.add(blockID.getContainerID());
-      } catch (IOException e) {
-        e.printStackTrace();
-      }
+    OzoneTestUtils.performOperationOnKeyContainers((blockID) -> {
+      MetadataStore db = BlockUtils.getDB((KeyValueContainerData) dnContainerSet
+          .getContainer(blockID.getContainerID()).getContainerData(), conf);
+      Assert.assertNull(db.get(Longs.toByteArray(blockID.getLocalID())));
+      Assert.assertNull(db.get(DFSUtil.string2Bytes(
+          OzoneConsts.DELETING_KEY_PREFIX + blockID.getLocalID())));
+      Assert.assertNotNull(DFSUtil
+          .string2Bytes(OzoneConsts.DELETED_KEY_PREFIX + blockID.getLocalID()));
+      containerIdsWithDeletedBlocks.add(blockID.getContainerID());
     }, omKeyLocationInfoGroups);
   }
 }

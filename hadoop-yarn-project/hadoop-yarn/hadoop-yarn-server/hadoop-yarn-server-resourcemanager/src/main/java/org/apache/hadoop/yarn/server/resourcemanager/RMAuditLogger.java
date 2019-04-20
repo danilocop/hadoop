@@ -20,8 +20,8 @@ package org.apache.hadoop.yarn.server.resourcemanager;
 import java.io.UnsupportedEncodingException;
 import java.net.InetAddress;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.ipc.CallerContext;
 import org.apache.hadoop.ipc.Server;
 import org.apache.hadoop.yarn.api.records.ApplicationAttemptId;
@@ -35,7 +35,8 @@ import org.apache.hadoop.yarn.api.records.Resource;
  * Audit log format is written as key=value pairs. Tab separated.
  */
 public class RMAuditLogger {
-  private static final Log LOG = LogFactory.getLog(RMAuditLogger.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(RMAuditLogger.class);
 
   enum Keys {USER, OPERATION, TARGET, RESULT, IP, PERMISSIONS,
                     DESCRIPTION, APPID, APPATTEMPTID, CONTAINERID, 
@@ -68,7 +69,6 @@ public class RMAuditLogger {
     public static final String FINISH_FAILED_APP = "Application Finished - Failed";
     public static final String FINISH_KILLED_APP = "Application Finished - Killed";
     public static final String REGISTER_AM = "Register App Master";
-    public static final String AM_ALLOCATE = "App Master Heartbeats";
     public static final String UNREGISTER_AM = "Unregister App Master";
     public static final String ALLOC_CONTAINER = "AM Allocated Container";
     public static final String RELEASE_CONTAINER = "AM Released Container";
@@ -77,16 +77,12 @@ public class RMAuditLogger {
     public static final String UPDATE_APP_TIMEOUTS =
         "Update Application Timeouts";
     public static final String GET_APP_TIMEOUTS = "Get Application Timeouts";
-    public static final String CHANGE_CONTAINER_RESOURCE =
-        "AM Changed Container Resource";
     public static final String SIGNAL_CONTAINER = "Signal Container Request";
 
     // Some commonly used descriptions
     public static final String UNAUTHORIZED_USER = "Unauthorized user";
     
     // For Reservation system
-    public static final String CREATE_NEW_RESERVATION_REQUEST = "Create " +
-        "Reservation Request";
     public static final String SUBMIT_RESERVATION_REQUEST = "Submit Reservation Request";
     public static final String UPDATE_RESERVATION_REQUEST = "Update Reservation Request";
     public static final String DELETE_RESERVATION_REQUEST = "Delete Reservation Request";

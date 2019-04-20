@@ -21,7 +21,6 @@ package org.apache.hadoop.ozone.freon;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
-import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
 import org.apache.hadoop.ozone.MiniOzoneCluster;
 import org.apache.hadoop.ozone.container.common.transport
     .server.XceiverServerSpi;
@@ -37,6 +36,7 @@ import org.apache.ratis.statemachine.impl.SingleFileSnapshotInfo;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
+import org.junit.Ignore;
 import org.junit.Test;
 
 /**
@@ -75,6 +75,7 @@ public class TestFreonWithDatanodeFastRestart {
   }
 
   @Test
+  @Ignore("TODO:HDDS-1160")
   public void testRestart() throws Exception {
     startFreon();
     StateMachine sm = getStateMachine();
@@ -88,8 +89,8 @@ public class TestFreonWithDatanodeFastRestart {
     String expectedSnapFile =
         storage.getSnapshotFile(termIndexBeforeRestart.getTerm(),
             termIndexBeforeRestart.getIndex()).getAbsolutePath();
-    Assert.assertEquals(snapshotInfo.getFile().getPath().toString(),
-        expectedSnapFile);
+    Assert.assertEquals(expectedSnapFile,
+        snapshotInfo.getFile().getPath().toString());
     Assert.assertEquals(termInSnapshot, termIndexBeforeRestart);
 
     // After restart the term index might have progressed to apply pending
@@ -128,7 +129,7 @@ public class TestFreonWithDatanodeFastRestart {
   private StateMachine getStateMachine() throws Exception {
     XceiverServerSpi server =
         cluster.getHddsDatanodes().get(0).getDatanodeStateMachine().
-            getContainer().getServer(HddsProtos.ReplicationType.RATIS);
+            getContainer().getWriteChannel();
     RaftServerProxy proxy =
         (RaftServerProxy)(((XceiverServerRatis)server).getServer());
     RaftGroupId groupId = proxy.getGroupIds().iterator().next();

@@ -52,18 +52,19 @@
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-annotations</artifactId>
     </dependency>
-    <!--
-    junit must be before mockito-all on the classpath.  mockito-all bundles its
-    own copy of the hamcrest classes, but they don't match our junit version.
-    -->
     <dependency>
       <groupId>junit</groupId>
       <artifactId>junit</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
     <groupId>org.mockito</groupId>
-      <artifactId>mockito-all</artifactId>
+      <artifactId>mockito-core</artifactId>
       <scope>test</scope>
     </dependency>
     <!-- 'mvn dependency:analyze' fails to detect use of this dependency -->
@@ -157,10 +158,6 @@
     <dependency>
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>commons-logging</groupId>
-      <artifactId>commons-logging</artifactId>
     </dependency>
     <dependency>
       <groupId>log4j</groupId>

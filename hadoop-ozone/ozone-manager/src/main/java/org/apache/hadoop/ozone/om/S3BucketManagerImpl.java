@@ -25,6 +25,8 @@ import org.apache.hadoop.ozone.OzoneConsts;
 import org.apache.hadoop.ozone.om.exceptions.OMException;
 import org.apache.hadoop.ozone.om.helpers.OmBucketInfo;
 import org.apache.hadoop.ozone.om.helpers.OmVolumeArgs;
+
+import static org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes.VOLUME_ALREADY_EXISTS;
 import org.apache.logging.log4j.util.Strings;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,7 +36,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 import static org.apache.hadoop.ozone.OzoneConsts.OM_S3_VOLUME_PREFIX;
-import static org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes.FAILED_VOLUME_ALREADY_EXISTS;
 
 /**
  * S3 Bucket Manager, this class maintains a mapping between S3 Bucket and Ozone
@@ -49,6 +50,7 @@ public class S3BucketManagerImpl implements S3BucketManager {
   private final OMMetadataManager omMetadataManager;
   private final VolumeManager volumeManager;
   private final BucketManager bucketManager;
+  private final boolean isRatisEnabled;
 
   /**
    * Construct an S3 Bucket Manager Object.
@@ -65,6 +67,9 @@ public class S3BucketManagerImpl implements S3BucketManager {
     this.omMetadataManager = omMetadataManager;
     this.volumeManager = volumeManager;
     this.bucketManager = bucketManager;
+    isRatisEnabled = configuration.getBoolean(
+        OMConfigKeys.OZONE_OM_RATIS_ENABLE_KEY,
+        OMConfigKeys.OZONE_OM_RATIS_ENABLE_DEFAULT);
   }
 
   @Override
@@ -95,14 +100,7 @@ public class S3BucketManagerImpl implements S3BucketManager {
     // You might wonder if all names map to this pattern, why we need to
     // store the S3 bucketName in a table at all. This is to support
     // anonymous access to bucket where the user name is absent.
-
-    // About Locking:
-    // We need to do this before we take the S3Bucket Lock since createVolume
-    // takes the userLock. So an attempt to take the user lock while holding
-    // S3Bucket lock will throw, so we need to create the volume if needed
-    // before we execute the bucket mapping functions.
     String ozoneVolumeName = formatOzoneVolumeName(userName);
-    createOzoneVolumeIfNeeded(userName, ozoneVolumeName);
 
     omMetadataManager.getLock().acquireS3Lock(bucketName);
     try {
@@ -143,7 +141,14 @@ public class S3BucketManagerImpl implements S3BucketManager {
         throw new OMException("No such S3 bucket. " + bucketName,
             OMException.ResultCodes.S3_BUCKET_NOT_FOUND);
       }
-      bucketManager.deleteBucket(getOzoneVolumeName(bucketName), bucketName);
+
+      if (isRatisEnabled) {
+        bucketManager.deleteBucket(getOzoneVolumeName(bucketName), bucketName);
+        bucketManager.applyDeleteBucket(getOzoneVolumeName(bucketName),
+            bucketName);
+      } else {
+        bucketManager.deleteBucket(getOzoneVolumeName(bucketName), bucketName);
+      }
       omMetadataManager.getS3Table().delete(bucket);
     } catch(IOException ex) {
       throw ex;
@@ -157,21 +162,30 @@ public class S3BucketManagerImpl implements S3BucketManager {
     return String.format(OM_S3_VOLUME_PREFIX + "%s", userName);
   }
 
-  private void createOzoneVolumeIfNeeded(String userName, String volumeName)
+  @Override
+  public boolean createOzoneVolumeIfNeeded(String userName)
       throws IOException {
     // We don't have to time of check. time of use problem here because
     // this call is invoked while holding the s3Bucket lock.
+    boolean newVolumeCreate = true;
+    String ozoneVolumeName = formatOzoneVolumeName(userName);
     try {
       OmVolumeArgs args =
           OmVolumeArgs.newBuilder()
               .setAdminName(S3_ADMIN_NAME)
               .setOwnerName(userName)
-              .setVolume(volumeName)
+              .setVolume(ozoneVolumeName)
               .setQuotaInBytes(OzoneConsts.MAX_QUOTA_IN_BYTES)
               .build();
-      volumeManager.createVolume(args);
+      if (isRatisEnabled) {
+        // When ratis is enabled we need to call apply also.
+        volumeManager.applyCreateVolume(args, volumeManager.createVolume(args));
+      } else {
+        volumeManager.createVolume(args);
+      }
     } catch (OMException exp) {
-      if (exp.getResult().compareTo(FAILED_VOLUME_ALREADY_EXISTS) == 0) {
+      newVolumeCreate = false;
+      if (exp.getResult().compareTo(VOLUME_ALREADY_EXISTS) == 0) {
         if (LOG.isDebugEnabled()) {
           LOG.debug("Volume already exists. {}", exp.getMessage());
         }
@@ -179,6 +193,8 @@ public class S3BucketManagerImpl implements S3BucketManager {
         throw exp;
       }
     }
+
+    return newVolumeCreate;
   }
 
   private void createOzoneBucket(String volumeName, String bucketName)
@@ -191,7 +207,11 @@ public class S3BucketManagerImpl implements S3BucketManager {
             .setIsVersionEnabled(Boolean.FALSE)
             .setStorageType(StorageType.DEFAULT)
             .build();
-    bucketManager.createBucket(bucketInfo);
+    if (isRatisEnabled) {
+      bucketManager.applyCreateBucket(bucketManager.createBucket(bucketInfo));
+    } else {
+      bucketManager.createBucket(bucketInfo);
+    }
   }
 
   @Override

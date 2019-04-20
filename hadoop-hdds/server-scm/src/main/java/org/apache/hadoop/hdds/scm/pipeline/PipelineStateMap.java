@@ -18,6 +18,9 @@
 package org.apache.hadoop.hdds.scm.pipeline;
 
 import com.google.common.base.Preconditions;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationType;
 import org.apache.hadoop.hdds.scm.container.ContainerID;
@@ -27,6 +30,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
@@ -41,14 +46,26 @@ class PipelineStateMap {
       PipelineStateMap.class);
 
   private final Map<PipelineID, Pipeline> pipelineMap;
-  private final Map<PipelineID, Set<ContainerID>> pipeline2container;
+  private final Map<PipelineID, NavigableSet<ContainerID>> pipeline2container;
+  private final Map<PipelineQuery, List<Pipeline>> query2OpenPipelines;
 
   PipelineStateMap() {
 
     // TODO: Use TreeMap for range operations?
-    this.pipelineMap = new HashMap<>();
-    this.pipeline2container = new HashMap<>();
+    pipelineMap = new HashMap<>();
+    pipeline2container = new HashMap<>();
+    query2OpenPipelines = new HashMap<>();
+    initializeQueryMap();
 
+  }
+
+  private void initializeQueryMap() {
+    for (ReplicationType type : ReplicationType.values()) {
+      for (ReplicationFactor factor : ReplicationFactor.values()) {
+        query2OpenPipelines
+            .put(new PipelineQuery(type, factor), new CopyOnWriteArrayList<>());
+      }
+    }
   }
 
   /**
@@ -70,6 +87,9 @@ class PipelineStateMap {
           .format("Duplicate pipeline ID %s detected.", pipeline.getId()));
     }
     pipeline2container.put(pipeline.getId(), new TreeSet<>());
+    if (pipeline.getPipelineState() == PipelineState.OPEN) {
+      query2OpenPipelines.get(new PipelineQuery(pipeline)).add(pipeline);
+    }
   }
 
   /**
@@ -112,6 +132,14 @@ class PipelineStateMap {
           String.format("%s not found", pipelineID));
     }
     return pipeline;
+  }
+
+  /**
+   * Get list of pipelines in SCM.
+   * @return List of pipelines
+   */
+  public List<Pipeline> getPipelines() {
+    return new ArrayList<>(pipelineMap.values());
   }
 
   /**
@@ -180,6 +208,10 @@ class PipelineStateMap {
     Preconditions.checkNotNull(factor, "Replication factor cannot be null");
     Preconditions.checkNotNull(state, "Pipeline state cannot be null");
 
+    if (state == PipelineState.OPEN) {
+      return Collections.unmodifiableList(
+          query2OpenPipelines.get(new PipelineQuery(type, factor)));
+    }
     return pipelineMap.values().stream().filter(
         pipeline -> pipeline.getType() == type
             && pipeline.getPipelineState() == state
@@ -188,23 +220,74 @@ class PipelineStateMap {
   }
 
   /**
+   * Get list of pipeline corresponding to specified replication type,
+   * replication factor and pipeline state.
+   *
+   * @param type - ReplicationType
+   * @param state - Required PipelineState
+   * @param excludeDns list of dns to exclude
+   * @param excludePipelines pipelines to exclude
+   * @return List of pipelines with specified replication type,
+   * replication factor and pipeline state
+   */
+  List<Pipeline> getPipelines(ReplicationType type, ReplicationFactor factor,
+      PipelineState state, Collection<DatanodeDetails> excludeDns,
+      Collection<PipelineID> excludePipelines) {
+    Preconditions.checkNotNull(type, "Replication type cannot be null");
+    Preconditions.checkNotNull(factor, "Replication factor cannot be null");
+    Preconditions.checkNotNull(state, "Pipeline state cannot be null");
+    Preconditions
+        .checkNotNull(excludeDns, "Datanode exclude list cannot be null");
+    Preconditions
+        .checkNotNull(excludeDns, "Pipeline exclude list cannot be null");
+    return getPipelines(type, factor, state).stream().filter(
+        pipeline -> !discardPipeline(pipeline, excludePipelines)
+            && !discardDatanode(pipeline, excludeDns))
+        .collect(Collectors.toList());
+  }
+
+  private boolean discardPipeline(Pipeline pipeline,
+      Collection<PipelineID> excludePipelines) {
+    if (excludePipelines.isEmpty()) {
+      return false;
+    }
+    Predicate<PipelineID> predicate = p -> p.equals(pipeline.getId());
+    return excludePipelines.parallelStream().anyMatch(predicate);
+  }
+
+  private boolean discardDatanode(Pipeline pipeline,
+      Collection<DatanodeDetails> excludeDns) {
+    if (excludeDns.isEmpty()) {
+      return false;
+    }
+    boolean discard = false;
+    for (DatanodeDetails dn : pipeline.getNodes()) {
+      Predicate<DatanodeDetails> predicate = p -> p.equals(dn);
+      discard = excludeDns.parallelStream().anyMatch(predicate);
+      if (discard) {
+        break;
+      }
+    }
+    return discard;
+  }
+  /**
    * Get set of containerIDs corresponding to a pipeline.
    *
    * @param pipelineID - PipelineID
    * @return Set of containerIDs belonging to the pipeline
    * @throws IOException if pipeline is not found
    */
-  Set<ContainerID> getContainers(PipelineID pipelineID)
+  NavigableSet<ContainerID> getContainers(PipelineID pipelineID)
       throws PipelineNotFoundException {
     Preconditions.checkNotNull(pipelineID,
         "Pipeline Id cannot be null");
 
-    Set<ContainerID> containerIDs = pipeline2container.get(pipelineID);
+    NavigableSet<ContainerID> containerIDs = pipeline2container.get(pipelineID);
     if (containerIDs == null) {
       throw new PipelineNotFoundException(
           String.format("%s not found", pipelineID));
     }
-    return new HashSet<>(containerIDs);
+    return new TreeSet<>(containerIDs);
   }
 
   /**
@@ -240,12 +323,6 @@ class PipelineStateMap {
     if (!pipeline.isClosed()) {
       throw new IOException(
           String.format("Pipeline with %s is not yet closed", pipelineID));
-    }
-
-    Set<ContainerID> containerIDs = pipeline2container.get(pipelineID);
-    if (containerIDs.size() != 0) {
-      throw new IOException(
-          String.format("Pipeline with %s is not empty", pipelineID));
     }
 
     pipelineMap.remove(pipelineID);
@@ -291,7 +368,53 @@ class PipelineStateMap {
     Preconditions.checkNotNull(state, "Pipeline LifeCycleState cannot be null");
 
     final Pipeline pipeline = getPipeline(pipelineID);
-    return pipelineMap.compute(pipelineID,
+    Pipeline updatedPipeline = pipelineMap.compute(pipelineID,
         (id, p) -> Pipeline.newBuilder(pipeline).setState(state).build());
+    PipelineQuery query = new PipelineQuery(pipeline);
+    if (updatedPipeline.getPipelineState() == PipelineState.OPEN) {
+      // for transition to OPEN state add pipeline to query2OpenPipelines
+      query2OpenPipelines.get(query).add(updatedPipeline);
+    } else if (updatedPipeline.getPipelineState() == PipelineState.CLOSED) {
+      // for transition from OPEN to CLOSED state remove pipeline from
+      // query2OpenPipelines
+      query2OpenPipelines.get(query).remove(pipeline);
+    }
+    return updatedPipeline;
+  }
+
+  private static class PipelineQuery {
+    private ReplicationType type;
+    private ReplicationFactor factor;
+
+    PipelineQuery(ReplicationType type, ReplicationFactor factor) {
+      this.type = Preconditions.checkNotNull(type);
+      this.factor = Preconditions.checkNotNull(factor);
+    }
+
+    PipelineQuery(Pipeline pipeline) {
+      type = pipeline.getType();
+      factor = pipeline.getFactor();
+    }
+
+    @Override
+    @SuppressFBWarnings("NP_EQUALS_SHOULD_HANDLE_NULL_ARGUMENT")
+    public boolean equals(Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (!this.getClass().equals(other.getClass())) {
+        return false;
+      }
+      PipelineQuery otherQuery = (PipelineQuery) other;
+      return type == otherQuery.type && factor == otherQuery.factor;
+    }
+
+    @Override
+    public int hashCode() {
+      return new HashCodeBuilder()
+          .append(type)
+          .append(factor)
+          .toHashCode();
+    }
   }
 }

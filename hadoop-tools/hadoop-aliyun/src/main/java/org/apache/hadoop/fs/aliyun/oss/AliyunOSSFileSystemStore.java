@@ -31,6 +31,7 @@ import com.aliyun.oss.model.CompleteMultipartUploadResult;
 import com.aliyun.oss.model.CopyObjectResult;
 import com.aliyun.oss.model.DeleteObjectsRequest;
 import com.aliyun.oss.model.DeleteObjectsResult;
+import com.aliyun.oss.model.GenericRequest;
 import com.aliyun.oss.model.GetObjectRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadRequest;
 import com.aliyun.oss.model.InitiateMultipartUploadResult;
@@ -82,16 +83,17 @@ import static org.apache.hadoop.fs.aliyun.oss.Constants.*;
 public class AliyunOSSFileSystemStore {
   public static final Logger LOG =
       LoggerFactory.getLogger(AliyunOSSFileSystemStore.class);
+  private String username;
   private FileSystem.Statistics statistics;
   private OSSClient ossClient;
   private String bucketName;
   private long uploadPartSize;
-  private long multipartThreshold;
   private int maxKeys;
   private String serverSideEncryptionAlgorithm;
 
-  public void initialize(URI uri, Configuration conf,
+  public void initialize(URI uri, Configuration conf, String user,
                          FileSystem.Statistics stat) throws IOException {
+    this.username = user;
     statistics = stat;
     ClientConfiguration clientConf = new ClientConfiguration();
     clientConf.setMaxConnections(conf.getInt(MAXIMUM_CONNECTIONS_KEY,
@@ -153,20 +155,9 @@ public class AliyunOSSFileSystemStore {
     ossClient = new OSSClient(endPoint, provider, clientConf);
     uploadPartSize = AliyunOSSUtils.getMultipartSizeProperty(conf,
         MULTIPART_UPLOAD_PART_SIZE_KEY, MULTIPART_UPLOAD_PART_SIZE_DEFAULT);
-    multipartThreshold = conf.getLong(MIN_MULTIPART_UPLOAD_THRESHOLD_KEY,
-        MIN_MULTIPART_UPLOAD_THRESHOLD_DEFAULT);
+
     serverSideEncryptionAlgorithm =
         conf.get(SERVER_SIDE_ENCRYPTION_ALGORITHM_KEY, "");
-
-    if (multipartThreshold < 5 * 1024 * 1024) {
-      LOG.warn(MIN_MULTIPART_UPLOAD_THRESHOLD_KEY + " must be at least 5 MB");
-      multipartThreshold = 5 * 1024 * 1024;
-    }
-
-    if (multipartThreshold > 1024 * 1024 * 1024) {
-      LOG.warn(MIN_MULTIPART_UPLOAD_THRESHOLD_KEY + " must be less than 1 GB");
-      multipartThreshold = 1024 * 1024 * 1024;
-    }
 
     bucketName = uri.getHost();
 
@@ -270,11 +261,13 @@ public class AliyunOSSFileSystemStore {
    */
   public ObjectMetadata getObjectMetadata(String key) {
     try {
-      ObjectMetadata objectMeta = ossClient.getObjectMetadata(bucketName, key);
+      GenericRequest request = new GenericRequest(bucketName, key);
+      request.setLogEnabled(false);
+      ObjectMetadata objectMeta = ossClient.getObjectMetadata(request);
       statistics.incrementReadOps(1);
       return objectMeta;
     } catch (OSSException osse) {
-      LOG.error("Exception thrown when get object meta: "
+      LOG.debug("Exception thrown when get object meta: "
               + key + ", exception: " + osse);
       return null;
     }
@@ -303,18 +296,19 @@ public class AliyunOSSFileSystemStore {
    * Copy an object from source key to destination key.
    *
    * @param srcKey source key.
+   * @param srcLen source file length.
    * @param dstKey destination key.
    * @return true if file is successfully copied.
    */
-  public boolean copyFile(String srcKey, String dstKey) {
-    ObjectMetadata objectMeta =
-        ossClient.getObjectMetadata(bucketName, srcKey);
-    statistics.incrementReadOps(1);
-    long contentLength = objectMeta.getContentLength();
-    if (contentLength <= multipartThreshold) {
+  public boolean copyFile(String srcKey, long srcLen, String dstKey) {
+    try {
+      //1, try single copy first
       return singleCopy(srcKey, dstKey);
-    } else {
-      return multipartCopy(srcKey, contentLength, dstKey);
+    } catch (Exception e) {
+      //2, if failed(shallow copy not supported), then multi part copy
+      LOG.debug("Exception thrown when copy file: " + srcKey
+          + ", exception: " + e + ", use multipartCopy instead");
+      return multipartCopy(srcKey, srcLen, dstKey);
     }
   }
 
@@ -416,7 +410,6 @@ public class AliyunOSSFileSystemStore {
       PutObjectResult result = ossClient.putObject(bucketName, key, fis, meta);
       LOG.debug(result.getETag());
       statistics.incrementWriteOps(1);
-      statistics.incrementBytesWritten(file.length());
     } finally {
       fis.close();
     }
@@ -573,9 +566,9 @@ public class AliyunOSSFileSystemStore {
           String key = summary.getKey();
           Path path = fs.makeQualified(new Path("/" + key));
           if (filter.accept(path) && acceptor.accept(path, summary)) {
-            FileStatus status = new FileStatus(summary.getSize(),
+            FileStatus status = new OSSFileStatus(summary.getSize(),
                 key.endsWith("/"), 1, fs.getDefaultBlockSize(path),
-                summary.getLastModified().getTime(), path);
+                summary.getLastModified().getTime(), path, username);
             stats.add(status);
           }
         }
@@ -583,7 +576,8 @@ public class AliyunOSSFileSystemStore {
         for (String commonPrefix : listing.getCommonPrefixes()) {
           Path path = fs.makeQualified(new Path("/" + commonPrefix));
           if (filter.accept(path) && acceptor.accept(path, commonPrefix)) {
-            FileStatus status = new FileStatus(0, true, 1, 0, 0, path);
+            FileStatus status = new OSSFileStatus(0, true, 1, 0, 0,
+                path, username);
             stats.add(status);
           }
         }
@@ -617,7 +611,6 @@ public class AliyunOSSFileSystemStore {
         uploadRequest.setPartNumber(idx);
         UploadPartResult uploadResult = ossClient.uploadPart(uploadRequest);
         statistics.incrementWriteOps(1);
-        statistics.incrementBytesWritten(file.length());
         return uploadResult.getPartETag();
       } catch (Exception e) {
         LOG.debug("Failed to upload "+ file.getPath() +", " +

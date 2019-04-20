@@ -50,7 +50,7 @@ import java.io.File;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Paths;
-import java.util.LinkedList;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -86,9 +86,10 @@ public class TestDatanodeStateMachine {
     conf.setTimeDuration(OZONE_SCM_HEARTBEAT_RPC_TIMEOUT, 500,
         TimeUnit.MILLISECONDS);
     conf.setBoolean(OzoneConfigKeys.DFS_CONTAINER_RATIS_IPC_RANDOM_PORT, true);
-    serverAddresses = new LinkedList<>();
-    scmServers = new LinkedList<>();
-    mockServers = new LinkedList<>();
+    conf.setBoolean(OzoneConfigKeys.DFS_CONTAINER_IPC_RANDOM_PORT, true);
+    serverAddresses = new ArrayList<>();
+    scmServers = new ArrayList<>();
+    mockServers = new ArrayList<>();
     for (int x = 0; x < scmServerCount; x++) {
       int port = SCMTestUtils.getReuseableAddress().getPort();
       String address = "127.0.0.1";
@@ -154,19 +155,21 @@ public class TestDatanodeStateMachine {
 
   /**
    * Assert that starting statemachine executes the Init State.
-   *
-   * @throws InterruptedException
    */
   @Test
   public void testStartStopDatanodeStateMachine() throws IOException,
       InterruptedException, TimeoutException {
     try (DatanodeStateMachine stateMachine =
-        new DatanodeStateMachine(getNewDatanodeDetails(), conf)) {
+        new DatanodeStateMachine(getNewDatanodeDetails(), conf, null)) {
       stateMachine.startDaemon();
       SCMConnectionManager connectionManager =
           stateMachine.getConnectionManager();
-      GenericTestUtils.waitFor(() -> connectionManager.getValues().size() == 1,
-          1000, 30000);
+      GenericTestUtils.waitFor(
+          () -> {
+            int size = connectionManager.getValues().size();
+            LOG.info("connectionManager.getValues().size() is {}", size);
+            return size == 1;
+          }, 1000, 30000);
 
       stateMachine.stopDaemon();
       assertTrue(stateMachine.isDaemonStopped());
@@ -219,7 +222,7 @@ public class TestDatanodeStateMachine {
     ContainerUtils.writeDatanodeDetailsTo(datanodeDetails, idPath);
 
     try (DatanodeStateMachine stateMachine =
-             new DatanodeStateMachine(datanodeDetails, conf)) {
+             new DatanodeStateMachine(datanodeDetails, conf, null)) {
       DatanodeStateMachine.DatanodeStates currentState =
           stateMachine.getContext().getState();
       Assert.assertEquals(DatanodeStateMachine.DatanodeStates.INIT,
@@ -256,6 +259,21 @@ public class TestDatanodeStateMachine {
 
       task.execute(executorService);
       newState = task.await(10, TimeUnit.SECONDS);
+
+      // Wait for GetVersion call (called by task.execute) to finish. After
+      // Earlier task.execute called into GetVersion. Wait for the execution
+      // to finish and the endPointState to move to REGISTER state.
+      GenericTestUtils.waitFor(() -> {
+        for (EndpointStateMachine endpoint :
+            stateMachine.getConnectionManager().getValues()) {
+          if (endpoint.getState() !=
+              EndpointStateMachine.EndPointStates.REGISTER) {
+            return false;
+          }
+        }
+        return true;
+      }, 1000, 50000);
+
       // If we are in running state, we should be in running.
       Assert.assertEquals(DatanodeStateMachine.DatanodeStates.RUNNING,
           newState);
@@ -325,7 +343,7 @@ public class TestDatanodeStateMachine {
     datanodeDetails.setPort(port);
 
     try (DatanodeStateMachine stateMachine =
-             new DatanodeStateMachine(datanodeDetails, conf)) {
+             new DatanodeStateMachine(datanodeDetails, conf, null)) {
       DatanodeStateMachine.DatanodeStates currentState =
           stateMachine.getContext().getState();
       Assert.assertEquals(DatanodeStateMachine.DatanodeStates.INIT,
@@ -361,8 +379,8 @@ public class TestDatanodeStateMachine {
   @Test
   public void testDatanodeStateMachineWithInvalidConfiguration()
       throws Exception {
-    LinkedList<Map.Entry<String, String>> confList =
-        new LinkedList<Map.Entry<String, String>>();
+    List<Map.Entry<String, String>> confList =
+        new ArrayList<>();
     confList.add(Maps.immutableEntry(ScmConfigKeys.OZONE_SCM_NAMES, ""));
 
     // Invalid ozone.scm.names
@@ -388,7 +406,7 @@ public class TestDatanodeStateMachine {
       perTestConf.setStrings(entry.getKey(), entry.getValue());
       LOG.info("Test with {} = {}", entry.getKey(), entry.getValue());
       try (DatanodeStateMachine stateMachine = new DatanodeStateMachine(
-          getNewDatanodeDetails(), perTestConf)) {
+          getNewDatanodeDetails(), perTestConf, null)) {
         DatanodeStateMachine.DatanodeStates currentState =
             stateMachine.getContext().getState();
         Assert.assertEquals(DatanodeStateMachine.DatanodeStates.INIT,

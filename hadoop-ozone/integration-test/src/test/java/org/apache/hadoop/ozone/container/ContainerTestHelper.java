@@ -18,43 +18,65 @@
 
 package org.apache.hadoop.ozone.container;
 
-import com.google.common.base.Preconditions;
-import org.apache.hadoop.conf.StorageUnit;
-import org.apache.hadoop.hdds.HddsUtils;
-import org.apache.hadoop.hdds.client.ReplicationType;
-import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
-import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
-import org.apache.hadoop.ozone.HddsDatanodeService;
-import org.apache.hadoop.ozone.MiniOzoneCluster;
-import org.apache.hadoop.ozone.client.ObjectStore;
-import org.apache.hadoop.ozone.client.io.OzoneInputStream;
-import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
-import org.apache.hadoop.ozone.container.common.impl.ContainerData;
-import org.apache.hadoop.ozone.container.common.interfaces.Container;
-import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
-import org.apache.commons.codec.binary.Hex;
-import org.apache.hadoop.hdds.client.BlockID;
-import org.apache.hadoop.hdds.protocol.DatanodeDetails;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .ContainerCommandRequestProto;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
-    .ContainerCommandResponseProto;
-import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
-import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.KeyValue;
-import org.apache.hadoop.ozone.OzoneConsts;
-import org.apache.hadoop.ozone.container.common.helpers.ChunkInfo;
-import org.apache.hadoop.ozone.container.common.helpers.BlockData;
-import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
-import org.junit.Assert;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Random;
+import java.util.UUID;
+import java.util.concurrent.TimeoutException;
+
+import org.apache.hadoop.conf.StorageUnit;
+import org.apache.hadoop.hdds.HddsUtils;
+import org.apache.hadoop.hdds.client.BlockID;
+import org.apache.hadoop.hdds.client.ReplicationType;
+import org.apache.hadoop.hdds.protocol.DatanodeDetails;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.ContainerCommandRequestProto;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.ContainerCommandRequestProto.Builder;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.ContainerCommandResponseProto;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.KeyValue;
+import org.apache.hadoop.hdds.protocol.proto.HddsProtos;
+import org.apache.hadoop.hdds.protocol.proto.HddsProtos.ReplicationFactor;
+import org.apache.hadoop.hdds.scm.container.ContainerID;
+import org.apache.hadoop.hdds.scm.container.ContainerInfo;
+import org.apache.hadoop.hdds.scm.container.ContainerNotFoundException;
+import org.apache.hadoop.hdds.scm.events.SCMEvents;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
+import org.apache.hadoop.hdds.scm.pipeline.PipelineNotFoundException;
+import org.apache.hadoop.hdds.security.token.OzoneBlockTokenIdentifier;
+import org.apache.hadoop.ozone.HddsDatanodeService;
+import org.apache.hadoop.ozone.MiniOzoneCluster;
+import org.apache.hadoop.ozone.OzoneConsts;
+import org.apache.hadoop.ozone.client.ObjectStore;
+import org.apache.hadoop.ozone.client.io.KeyOutputStream;
+import org.apache.hadoop.ozone.client.io.OzoneInputStream;
+import org.apache.hadoop.ozone.client.io.OzoneOutputStream;
+import org.apache.hadoop.ozone.common.Checksum;
+import org.apache.hadoop.ozone.common.OzoneChecksumException;
+import org.apache.hadoop.ozone.container.common.helpers.BlockData;
+import org.apache.hadoop.ozone.container.common.helpers.ChunkInfo;
+import org.apache.hadoop.ozone.container.common.impl.ContainerData;
+import org.apache.hadoop.ozone.container.common.interfaces.Container;
+import org.apache.hadoop.ozone.container.common.transport.server.XceiverServerSpi;
+import org.apache.hadoop.ozone.container.common.transport.server.ratis.XceiverServerRatis;
+import org.apache.hadoop.ozone.om.helpers.OmKeyLocationInfo;
+import org.apache.hadoop.security.token.Token;
+
+import com.google.common.base.Preconditions;
+import org.apache.hadoop.test.GenericTestUtils;
+import org.apache.ratis.thirdparty.com.google.protobuf.ByteString;
+import org.junit.Assert;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Helpers for container tests.
@@ -180,10 +202,9 @@ public final class ContainerTestHelper {
    * @throws NoSuchAlgorithmException
    */
   public static void setDataChecksum(ChunkInfo info, byte[] data)
-      throws NoSuchAlgorithmException {
-    MessageDigest sha = MessageDigest.getInstance(OzoneConsts.FILE_HASH);
-    sha.update(data);
-    info.setChecksum(Hex.encodeHexString(sha.digest()));
+      throws OzoneChecksumException {
+    Checksum checksum = new Checksum();
+    info.setChecksumData(checksum.computeChecksum(data));
   }
 
   /**
@@ -197,8 +218,7 @@ public final class ContainerTestHelper {
    * @throws NoSuchAlgorithmException
    */
   public static ContainerCommandRequestProto getWriteChunkRequest(
-      Pipeline pipeline, BlockID blockID, int datalen)
-      throws IOException, NoSuchAlgorithmException {
+      Pipeline pipeline, BlockID blockID, int datalen) throws IOException {
     LOG.trace("writeChunk {} (blockID={}) to pipeline=",
         datalen, blockID, pipeline);
     ContainerProtos.WriteChunkRequestProto.Builder writeRequest =
@@ -214,12 +234,11 @@ public final class ContainerTestHelper {
     writeRequest.setChunkData(info.getProtoBufMessage());
     writeRequest.setData(ByteString.copyFrom(data));
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.WriteChunk);
     request.setContainerID(blockID.getContainerID());
     request.setWriteChunk(writeRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
 
     return request.build();
@@ -256,12 +275,11 @@ public final class ContainerTestHelper {
     smallFileRequest.setData(ByteString.copyFrom(data));
     smallFileRequest.setBlock(putRequest);
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.PutSmallFile);
     request.setContainerID(blockID.getContainerID());
     request.setPutSmallFile(smallFileRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -275,12 +293,11 @@ public final class ContainerTestHelper {
     ContainerCommandRequestProto getKey = getBlockRequest(pipeline, putKey);
     smallFileRequest.setBlock(getKey.getGetBlock());
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.GetSmallFile);
     request.setContainerID(getKey.getGetBlock().getBlockID().getContainerID());
     request.setGetSmallFile(smallFileRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -305,12 +322,11 @@ public final class ContainerTestHelper {
     readRequest.setBlockID(request.getBlockID());
     readRequest.setChunkData(request.getChunkData());
 
-    ContainerCommandRequestProto.Builder newRequest =
+    Builder newRequest =
         ContainerCommandRequestProto.newBuilder();
     newRequest.setCmdType(ContainerProtos.Type.ReadChunk);
     newRequest.setContainerID(readRequest.getBlockID().getContainerID());
     newRequest.setReadChunk(readRequest);
-    newRequest.setTraceID(UUID.randomUUID().toString());
     newRequest.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return newRequest.build();
   }
@@ -338,12 +354,11 @@ public final class ContainerTestHelper {
     deleteRequest.setChunkData(writeRequest.getChunkData());
     deleteRequest.setBlockID(writeRequest.getBlockID());
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.DeleteChunk);
     request.setContainerID(writeRequest.getBlockID().getContainerID());
     request.setDeleteChunk(deleteRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -357,16 +372,51 @@ public final class ContainerTestHelper {
   public static ContainerCommandRequestProto getCreateContainerRequest(
       long containerID, Pipeline pipeline) throws IOException {
     LOG.trace("addContainer: {}", containerID);
+    return getContainerCommandRequestBuilder(containerID, pipeline).build();
+  }
 
-    ContainerCommandRequestProto.Builder request =
+  /**
+   * Returns a create container command with token. There are a bunch of
+   * tests where we need to just send a request and get a reply.
+   *
+   * @return ContainerCommandRequestProto.
+   */
+  public static ContainerCommandRequestProto getCreateContainerRequest(
+      long containerID, Pipeline pipeline, Token token) throws IOException {
+    LOG.trace("addContainer: {}", containerID);
+    return getContainerCommandRequestBuilder(containerID, pipeline)
+        .setEncodedToken(token.encodeToUrlString())
+        .build();
+  }
+
+  private static Builder getContainerCommandRequestBuilder(long containerID,
+      Pipeline pipeline) throws IOException {
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.CreateContainer);
     request.setContainerID(containerID);
     request.setCreateContainer(
         ContainerProtos.CreateContainerRequestProto.getDefaultInstance());
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
 
+    return request;
+  }
+
+  /**
+   * Returns a create container command for test purposes. There are a bunch of
+   * tests where we need to just send a request and get a reply.
+   *
+   * @return ContainerCommandRequestProto.
+   */
+  public static ContainerCommandRequestProto getCreateContainerSecureRequest(
+      long containerID, Pipeline pipeline,
+      Token<OzoneBlockTokenIdentifier> token) throws IOException {
+    LOG.trace("addContainer: {}", containerID);
+
+    Builder request = getContainerCommandRequestBuilder(containerID, pipeline);
+    if(token != null){
+      request.setEncodedToken(token.encodeToUrlString());
+    }
     return request.build();
   }
 
@@ -394,12 +444,11 @@ public final class ContainerTestHelper {
     Pipeline pipeline =
         ContainerTestHelper.createSingleNodePipeline();
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.UpdateContainer);
     request.setContainerID(containerID);
     request.setUpdateContainer(updateRequestBuilder.build());
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -445,12 +494,11 @@ public final class ContainerTestHelper {
     blockData.setBlockCommitSequenceId(0);
     putRequest.setBlockData(blockData.getProtoBufMessage());
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.PutBlock);
     request.setContainerID(blockData.getContainerID());
     request.setPutBlock(putRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -473,12 +521,11 @@ public final class ContainerTestHelper {
         ContainerProtos.GetBlockRequestProto.newBuilder();
     getRequest.setBlockID(blockID);
 
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.GetBlock);
     request.setContainerID(blockID.getContainerID());
     request.setGetBlock(getRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -491,7 +538,6 @@ public final class ContainerTestHelper {
    */
   public static void verifyGetBlock(ContainerCommandRequestProto request,
       ContainerCommandResponseProto response, int expectedChunksCount) {
-    Assert.assertEquals(request.getTraceID(), response.getTraceID());
     Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
     Assert.assertEquals(expectedChunksCount,
         response.getGetBlock().getBlockData().getChunksCount());
@@ -511,12 +557,11 @@ public final class ContainerTestHelper {
     ContainerProtos.DeleteBlockRequestProto.Builder delRequest =
         ContainerProtos.DeleteBlockRequestProto.newBuilder();
     delRequest.setBlockID(blockID);
-    ContainerCommandRequestProto.Builder request =
+    Builder request =
         ContainerCommandRequestProto.newBuilder();
     request.setCmdType(ContainerProtos.Type.DeleteBlock);
     request.setContainerID(blockID.getContainerID());
     request.setDeleteBlock(delRequest);
-    request.setTraceID(UUID.randomUUID().toString());
     request.setDatanodeUuid(pipeline.getFirstNode().getUuidString());
     return request.build();
   }
@@ -535,7 +580,6 @@ public final class ContainerTestHelper {
             .setContainerID(containerID)
             .setCloseContainer(
                 ContainerProtos.CloseContainerRequestProto.getDefaultInstance())
-            .setTraceID(UUID.randomUUID().toString())
             .setDatanodeUuid(pipeline.getFirstNode().getUuidString())
             .build();
 
@@ -580,7 +624,6 @@ public final class ContainerTestHelper {
         .setDeleteContainer(
             ContainerProtos.DeleteContainerRequestProto.getDefaultInstance())
         .setDeleteContainer(deleteRequest)
-        .setTraceID(UUID.randomUUID().toString())
         .setDatanodeUuid(pipeline.getFirstNode().getUuidString())
         .build();
   }
@@ -644,7 +687,16 @@ public final class ContainerTestHelper {
             org.apache.hadoop.hdds.client.ReplicationFactor.ONE :
             org.apache.hadoop.hdds.client.ReplicationFactor.THREE;
     return objectStore.getVolume(volumeName).getBucket(bucketName)
-        .createKey(keyName, size, type, factor);
+        .createKey(keyName, size, type, factor, new HashMap<>());
+  }
+
+  public static OzoneOutputStream createKey(String keyName,
+      ReplicationType type,
+      org.apache.hadoop.hdds.client.ReplicationFactor factor, long size,
+      ObjectStore objectStore, String volumeName, String bucketName)
+      throws Exception {
+    return objectStore.getVolume(volumeName).getBucket(bucketName)
+        .createKey(keyName, size, type, factor, new HashMap<>());
   }
 
   public static void validateData(String keyName, byte[] data,
@@ -665,5 +717,144 @@ public final class ContainerTestHelper {
 
   public static String getFixedLengthString(String string, int length) {
     return String.format("%1$" + length + "s", string);
+  }
+
+  public static void waitForContainerClose(OzoneOutputStream outputStream,
+      MiniOzoneCluster cluster) throws Exception {
+    KeyOutputStream keyOutputStream =
+        (KeyOutputStream) outputStream.getOutputStream();
+    List<OmKeyLocationInfo> locationInfoList =
+        keyOutputStream.getLocationInfoList();
+    List<Long> containerIdList = new ArrayList<>();
+    for (OmKeyLocationInfo info : locationInfoList) {
+      long id = info.getContainerID();
+      if (!containerIdList.contains(id)) {
+        containerIdList.add(id);
+      }
+    }
+    Assert.assertTrue(!containerIdList.isEmpty());
+    waitForContainerClose(cluster, containerIdList.toArray(new Long[0]));
+  }
+
+  public static void waitForPipelineClose(OzoneOutputStream outputStream,
+      MiniOzoneCluster cluster, boolean waitForContainerCreation)
+      throws Exception {
+    KeyOutputStream keyOutputStream =
+        (KeyOutputStream) outputStream.getOutputStream();
+    List<OmKeyLocationInfo> locationInfoList =
+        keyOutputStream.getLocationInfoList();
+    List<Long> containerIdList = new ArrayList<>();
+    for (OmKeyLocationInfo info : locationInfoList) {
+      containerIdList.add(info.getContainerID());
+    }
+    Assert.assertTrue(!containerIdList.isEmpty());
+    waitForPipelineClose(cluster, waitForContainerCreation,
+        containerIdList.toArray(new Long[0]));
+  }
+
+  public static void waitForPipelineClose(MiniOzoneCluster cluster,
+      boolean waitForContainerCreation, Long... containerIdList)
+      throws TimeoutException, InterruptedException, IOException {
+    List<Pipeline> pipelineList = new ArrayList<>();
+    for (long containerID : containerIdList) {
+      ContainerInfo container =
+          cluster.getStorageContainerManager().getContainerManager()
+              .getContainer(ContainerID.valueof(containerID));
+      Pipeline pipeline =
+          cluster.getStorageContainerManager().getPipelineManager()
+              .getPipeline(container.getPipelineID());
+      if (!pipelineList.contains(pipeline)) {
+        pipelineList.add(pipeline);
+      }
+      List<DatanodeDetails> datanodes = pipeline.getNodes();
+
+      if (waitForContainerCreation) {
+        for (DatanodeDetails details : datanodes) {
+          // Client will issue write chunk and it will create the container on
+          // datanodes.
+          // wait for the container to be created
+          GenericTestUtils
+              .waitFor(() -> isContainerPresent(cluster, containerID, details),
+                  500, 100 * 1000);
+          Assert.assertTrue(isContainerPresent(cluster, containerID, details));
+
+          // make sure the container gets created first
+          Assert.assertFalse(ContainerTestHelper
+              .isContainerClosed(cluster, containerID, details));
+        }
+      }
+    }
+    for (Pipeline pipeline1 : pipelineList) {
+      // issue pipeline destroy command
+      cluster.getStorageContainerManager().getPipelineManager()
+          .finalizeAndDestroyPipeline(pipeline1, false);
+    }
+
+    // wait for the pipeline to get destroyed in the datanodes
+    for (Pipeline pipeline : pipelineList) {
+      for (DatanodeDetails dn : pipeline.getNodes()) {
+        XceiverServerSpi server =
+            cluster.getHddsDatanodes().get(cluster.getHddsDatanodeIndex(dn))
+                .getDatanodeStateMachine().getContainer().getWriteChannel();
+        Assert.assertTrue(server instanceof XceiverServerRatis);
+        XceiverServerRatis raftServer = (XceiverServerRatis) server;
+        GenericTestUtils.waitFor(
+            () -> (!raftServer.getPipelineIds().contains(pipeline.getId())),
+            500, 100 * 1000);
+      }
+    }
+  }
+
+  public static void waitForContainerClose(MiniOzoneCluster cluster,
+      Long... containerIdList)
+      throws ContainerNotFoundException, PipelineNotFoundException,
+      TimeoutException, InterruptedException {
+    List<Pipeline> pipelineList = new ArrayList<>();
+    for (long containerID : containerIdList) {
+      ContainerInfo container =
+          cluster.getStorageContainerManager().getContainerManager()
+              .getContainer(ContainerID.valueof(containerID));
+      Pipeline pipeline =
+          cluster.getStorageContainerManager().getPipelineManager()
+              .getPipeline(container.getPipelineID());
+      pipelineList.add(pipeline);
+      List<DatanodeDetails> datanodes = pipeline.getNodes();
+
+      for (DatanodeDetails details : datanodes) {
+        // Client will issue write chunk and it will create the container on
+        // datanodes.
+        // wait for the container to be created
+        GenericTestUtils
+            .waitFor(() -> isContainerPresent(cluster, containerID, details),
+                500, 100 * 1000);
+        Assert.assertTrue(isContainerPresent(cluster, containerID, details));
+
+        // make sure the container gets created first
+        Assert.assertFalse(ContainerTestHelper
+            .isContainerClosed(cluster, containerID, details));
+        // send the order to close the container
+        cluster.getStorageContainerManager().getEventQueue()
+            .fireEvent(SCMEvents.CLOSE_CONTAINER,
+                ContainerID.valueof(containerID));
+      }
+    }
+    int index = 0;
+    for (long containerID : containerIdList) {
+      Pipeline pipeline = pipelineList.get(index);
+      List<DatanodeDetails> datanodes = pipeline.getNodes();
+      // Below condition avoids the case where container has been allocated
+      // but not yet been used by the client. In such a case container is never
+      // created.
+      for (DatanodeDetails datanodeDetails : datanodes) {
+        GenericTestUtils.waitFor(
+            () -> isContainerClosed(cluster, containerID, datanodeDetails), 500,
+            15 * 1000);
+        //double check if it's really closed
+        // (waitFor also throws an exception)
+        Assert.assertTrue(
+            isContainerClosed(cluster, containerID, datanodeDetails));
+      }
+      index++;
+    }
   }
 }

@@ -353,6 +353,14 @@ public interface MRJobConfig {
   public static final String TASK_TIMEOUT = "mapreduce.task.timeout";
   long DEFAULT_TASK_TIMEOUT_MILLIS = 5 * 60 * 1000L;
 
+  /**
+   * The max timeout before receiving remote task's first heartbeat.
+   * This parameter is in order to avoid waiting for the container
+   * to start indefinitely, which made task stuck in the NEW state.
+   */
+  String TASK_STUCK_TIMEOUT_MS = "mapreduce.task.stuck.timeout-ms";
+  long DEFAULT_TASK_STUCK_TIMEOUT_MS = 10 * 60 * 1000L;
+
   String TASK_PROGRESS_REPORT_INTERVAL =
       "mapreduce.task.progress-report.interval";
 
@@ -1218,4 +1226,18 @@ public interface MRJobConfig {
       MR_AM_STAGING_DIR + ".erasurecoding.enabled";
 
   boolean DEFAULT_MR_AM_STAGING_ERASURECODING_ENABLED = false;
+
+  /**
+   * Prefix for options which are passed in to the filesystem
+   * after converting the subsequent dotted element to the schema.
+   */
+  @Unstable
+  String INPUT_FILE_OPTION_PREFIX = "mapreduce.job.input.file.option.";
+
+  /**
+   * Prefix for mandatory options which are passed in to the filesystem
+   * after converting the subsequent dotted element to the schema.
+   */
+  @Unstable
+  String INPUT_FILE_MANDATORY_PREFIX = "mapreduce.job.input.file.must.";
 }

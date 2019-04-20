@@ -71,7 +71,6 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import com.google.common.base.Charsets;
 import com.google.common.base.Joiner;
@@ -2022,18 +2021,17 @@ public class DFSTestUtil {
    * Get the RefreshUserMappingsProtocol RPC proxy for the NN associated with
    * this DFSClient object
    *
-   * @param nameNodeUri the URI of the NN to get a proxy for.
+   * @param nnAddr the address of the NN to get a proxy for.
    *
    * @return the RefreshUserMappingsProtocol RPC proxy associated with this
    * DFSClient object
    */
   @VisibleForTesting
   public static RefreshUserMappingsProtocol getRefreshUserMappingsProtocolProxy(
-      Configuration conf, URI nameNodeUri) throws IOException {
-    final AtomicBoolean nnFallbackToSimpleAuth = new AtomicBoolean(false);
-    return NameNodeProxies.createProxy(conf,
-        nameNodeUri, RefreshUserMappingsProtocol.class,
-        nnFallbackToSimpleAuth).getProxy();
+      Configuration conf, InetSocketAddress nnAddr) throws IOException {
+    return NameNodeProxies.createNonHAProxy(
+        conf, nnAddr, RefreshUserMappingsProtocol.class,
+        UserGroupInformation.getCurrentUser(), false).getProxy();
   }
 
   /**
@@ -2139,7 +2137,7 @@ public class DFSTestUtil {
         .create(file.toString(), new FsPermission((short)0755),
         dfs.getClient().getClientName(),
         new EnumSetWritable<>(EnumSet.of(CreateFlag.CREATE)),
-        false, (short)1, 128*1024*1024L, null, null);
+            false, (short) 1, 128 * 1024 * 1024L, null, null, null);
 
     FSNamesystem ns = cluster.getNamesystem();
     FSDirectory fsdir = ns.getFSDirectory();
@@ -2396,6 +2394,41 @@ public class DFSTestUtil {
       }
     }
     return closedFiles;
+  }
+
+  /**
+   * Setup cluster with desired number of DN, racks, and specified number of
+   * rack that only has 1 DN. Other racks will be evenly setup with the number
+   * of DNs.
+   *
+   * @param conf the conf object to start the cluster.
+   * @param numDatanodes number of total Datanodes.
+   * @param numRacks number of total racks
+   * @param numSingleDnRacks number of racks that only has 1 DN
+   * @throws Exception
+   */
+  public static MiniDFSCluster setupCluster(final Configuration conf,
+                                            final int numDatanodes,
+                                            final int numRacks,
+                                            final int numSingleDnRacks)
+      throws Exception {
+    assert numDatanodes > numRacks;
+    assert numRacks > numSingleDnRacks;
+    assert numSingleDnRacks >= 0;
+    final String[] racks = new String[numDatanodes];
+    for (int i = 0; i < numSingleDnRacks; i++) {
+      racks[i] = "/rack" + i;
+    }
+    for (int i = numSingleDnRacks; i < numDatanodes; i++) {
+      racks[i] =
+          "/rack" + (numSingleDnRacks + (i % (numRacks - numSingleDnRacks)));
+    }
+    MiniDFSCluster cluster = new MiniDFSCluster.Builder(conf)
+        .numDataNodes(numDatanodes)
+        .racks(racks)
+        .build();
+    cluster.waitActive();
+    return cluster;
   }
 
   /**

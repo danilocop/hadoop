@@ -20,11 +20,10 @@ package org.apache.hadoop.yarn.server.resourcemanager;
 
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.ByteBuffer;
 import java.util.concurrent.ConcurrentMap;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Private;
 import org.apache.hadoop.classification.InterfaceStability.Unstable;
 import org.apache.hadoop.conf.Configuration;
@@ -35,6 +34,7 @@ import org.apache.hadoop.yarn.api.records.NodeId;
 import org.apache.hadoop.yarn.conf.ConfigurationProvider;
 import org.apache.hadoop.yarn.event.Dispatcher;
 import org.apache.hadoop.yarn.nodelabels.NodeAttributesManager;
+import org.apache.hadoop.yarn.proto.YarnServerCommonServiceProtos.SystemCredentialsForAppsProto;
 import org.apache.hadoop.yarn.server.resourcemanager.ahs.RMApplicationHistoryWriter;
 import org.apache.hadoop.yarn.server.resourcemanager.metrics.SystemMetricsPublisher;
 import org.apache.hadoop.yarn.server.resourcemanager.nodelabels.RMNodeLabelsManager;
@@ -83,7 +83,8 @@ import org.apache.hadoop.yarn.webapp.util.WebAppUtils;
  */
 public class RMContextImpl implements RMContext {
 
-  private static final Log LOG = LogFactory.getLog(RMContextImpl.class);
+  private static final Logger LOG =
+      LoggerFactory.getLogger(RMContextImpl.class);
   private static final String UNAVAILABLE = "N/A";
   /**
    * RM service contexts which runs through out RM life span. These are created
@@ -572,7 +573,8 @@ public class RMContextImpl implements RMContext {
     activeServiceContext.setSystemClock(clock);
   }
 
-  public ConcurrentMap<ApplicationId, ByteBuffer> getSystemCredentialsForApps() {
+  public ConcurrentMap<ApplicationId, SystemCredentialsForAppsProto>
+      getSystemCredentialsForApps() {
     return activeServiceContext.getSystemCredentialsForApps();
   }
 
@@ -665,5 +667,15 @@ public class RMContextImpl implements RMContext {
   @Override
   public NodeAttributesManager getNodeAttributesManager() {
     return activeServiceContext.getNodeAttributesManager();
+  }
+
+  @Override
+  public long getTokenSequenceNo() {
+    return this.activeServiceContext.getTokenSequenceNo();
+  }
+
+  @Override
+  public void incrTokenSequenceNo() {
+    this.activeServiceContext.incrTokenSequenceNo();
   }
 }

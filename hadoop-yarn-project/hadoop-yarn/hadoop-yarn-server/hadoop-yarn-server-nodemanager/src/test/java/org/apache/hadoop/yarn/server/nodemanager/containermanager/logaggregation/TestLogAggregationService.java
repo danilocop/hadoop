@@ -18,9 +18,15 @@
 
 package org.apache.hadoop.yarn.server.nodemanager.containermanager.logaggregation;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.Matchers.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
@@ -778,7 +784,7 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
           (int) (Math.random() * 1000));
     doThrow(new YarnRuntimeException("KABOOM!"))
       .when(logAggregationService).initAppAggregator(
-          eq(appId), eq(user), any(Credentials.class),
+          eq(appId), eq(user), any(),
           anyMap(), any(LogAggregationContext.class), anyLong());
     LogAggregationContext contextWithAMAndFailed =
         Records.newRecord(LogAggregationContext.class);
@@ -865,7 +871,7 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     };
     checkEvents(appEventHandler, expectedEvents, false,
         "getType", "getApplicationID", "getDiagnostic");
-    Assert.assertEquals(logAggregationService.getInvalidTokenApps().size(), 1);
+    assertThat(logAggregationService.getInvalidTokenApps()).hasSize(1);
     // verify trying to collect logs for containers/apps we don't know about
     // doesn't blow up and tear down the NM
     logAggregationService.handle(new LogHandlerContainerFinishedEvent(
@@ -1189,8 +1195,8 @@ public class TestLogAggregationService extends BaseContainerManagerTest {
     final Lock rLock = rwLock.readLock();
     final Lock wLock = rwLock.writeLock();
 
+    wLock.lock();
     try {
-      wLock.lock();
       Runnable runnable = new Runnable() {
         @Override
         public void run() {

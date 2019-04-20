@@ -22,8 +22,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.net.NetworkTopology;
 import org.apache.hadoop.security.SecurityUtilTestHelper;
@@ -61,10 +61,10 @@ import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeRemoved
 import org.apache.hadoop.yarn.server.resourcemanager.scheduler.event.NodeUpdateSchedulerEvent;
 import org.apache.hadoop.yarn.server.resourcemanager.security.RMContainerTokenSecretManager;
 import org.apache.hadoop.yarn.server.utils.BuilderUtils;
+import org.apache.hadoop.yarn.util.resource.CustomResourceTypesConfigurationProvider;
 import org.apache.hadoop.yarn.util.resource.DominantResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.ResourceCalculator;
 import org.apache.hadoop.yarn.util.resource.Resources;
-import org.apache.hadoop.yarn.util.resource.TestResourceUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -74,8 +74,8 @@ import static org.apache.hadoop.yarn.server.resourcemanager.scheduler.capacity.C
 
 public class TestContainerAllocation {
 
-  private static final Log LOG = LogFactory
-      .getLog(TestContainerAllocation.class);
+  private static final Logger LOG = LoggerFactory
+      .getLogger(TestContainerAllocation.class);
 
   private final int GB = 1024;
 
@@ -1010,7 +1010,8 @@ public class TestContainerAllocation {
      * After nm2 do next node heartbeat, scheduler should unreserve the reserved
      * container on nm1 then allocate a container on nm2.
      */
-    TestResourceUtils.addNewTypesToResources("resource1");
+    CustomResourceTypesConfigurationProvider.
+        initResourceTypes("resource1");
     CapacitySchedulerConfiguration newConf =
         (CapacitySchedulerConfiguration) TestUtils
             .getConfigurationWithMultipleQueues(conf);

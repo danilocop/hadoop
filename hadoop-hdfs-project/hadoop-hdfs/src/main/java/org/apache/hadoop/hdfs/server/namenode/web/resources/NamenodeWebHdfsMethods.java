@@ -79,6 +79,7 @@ import org.apache.hadoop.hdfs.protocol.BlockStoragePolicy;
 import org.apache.hadoop.hdfs.protocol.ClientProtocol;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
 import org.apache.hadoop.hdfs.protocol.DirectoryListing;
+import org.apache.hadoop.hdfs.protocol.ErasureCodingPolicy;
 import org.apache.hadoop.hdfs.protocol.HdfsFileStatus;
 import org.apache.hadoop.hdfs.protocol.LocatedBlocks;
 import org.apache.hadoop.hdfs.protocol.SnapshotDiffReport;
@@ -272,11 +273,19 @@ public class NamenodeWebHdfsMethods {
       for (String host : StringUtils
           .getTrimmedStringCollection(excludeDatanodes)) {
         int idx = host.indexOf(":");
-        if (idx != -1) {          
-          excludes.add(bm.getDatanodeManager().getDatanodeByXferAddr(
-              host.substring(0, idx), Integer.parseInt(host.substring(idx + 1))));
+        Node excludeNode = null;
+        if (idx != -1) {
+          excludeNode = bm.getDatanodeManager().getDatanodeByXferAddr(
+             host.substring(0, idx), Integer.parseInt(host.substring(idx + 1)));
         } else {
-          excludes.add(bm.getDatanodeManager().getDatanodeByHost(host));
+          excludeNode = bm.getDatanodeManager().getDatanodeByHost(host);
+        }
+
+        if (excludeNode != null) {
+          excludes.add(excludeNode);
+        } else {
+          LOG.debug("DataNode {} was requested to be excluded, "
+                + "but it was not found.", host);
         }
       }
     }
@@ -349,12 +358,18 @@ public class NamenodeWebHdfsMethods {
     cp.cancelDelegationToken(token);
   }
 
-  public Token<? extends TokenIdentifier> generateDelegationToken(
-      final UserGroupInformation ugi,
+  public Credentials createCredentials(final UserGroupInformation ugi,
       final String renewer) throws IOException {
     final NameNode namenode = (NameNode)context.getAttribute("name.node");
     final Credentials c = DelegationTokenSecretManager.createCredentials(
         namenode, ugi, renewer != null? renewer: ugi.getShortUserName());
+    return c;
+  }
+
+  public Token<? extends TokenIdentifier> generateDelegationToken(
+      final UserGroupInformation ugi,
+      final String renewer) throws IOException {
+    Credentials c = createCredentials(ugi, renewer);
     if (c == null) {
       return null;
     }
@@ -492,14 +507,16 @@ public class NamenodeWebHdfsMethods {
       @QueryParam(NoRedirectParam.NAME) @DefaultValue(NoRedirectParam.DEFAULT)
           final NoRedirectParam noredirect,
       @QueryParam(StoragePolicyParam.NAME) @DefaultValue(StoragePolicyParam
-          .DEFAULT) final StoragePolicyParam policyName
+          .DEFAULT) final StoragePolicyParam policyName,
+      @QueryParam(ECPolicyParam.NAME) @DefaultValue(ECPolicyParam
+              .DEFAULT) final ECPolicyParam ecpolicy
       ) throws IOException, InterruptedException {
     return put(ugi, delegation, username, doAsUser, ROOT, op, destination,
         owner, group, permission, unmaskedPermission, overwrite, bufferSize,
         replication, blockSize, modificationTime, accessTime, renameOptions,
         createParent, delegationTokenArgument, aclPermission, xattrName,
         xattrValue, xattrSetFlag, snapshotName, oldSnapshotName,
-        excludeDatanodes, createFlagParam, noredirect, policyName);
+        excludeDatanodes, createFlagParam, noredirect, policyName, ecpolicy);
   }
 
   /** Validate all required params. */
@@ -579,7 +596,9 @@ public class NamenodeWebHdfsMethods {
       @QueryParam(NoRedirectParam.NAME) @DefaultValue(NoRedirectParam.DEFAULT)
           final NoRedirectParam noredirect,
       @QueryParam(StoragePolicyParam.NAME) @DefaultValue(StoragePolicyParam
-          .DEFAULT) final StoragePolicyParam policyName
+          .DEFAULT) final StoragePolicyParam policyName,
+      @QueryParam(ECPolicyParam.NAME) @DefaultValue(ECPolicyParam.DEFAULT)
+      final ECPolicyParam ecpolicy
       ) throws IOException, InterruptedException {
 
     init(ugi, delegation, username, doAsUser, path, op, destination, owner,
@@ -599,7 +618,7 @@ public class NamenodeWebHdfsMethods {
               renameOptions, createParent, delegationTokenArgument,
               aclPermission, xattrName, xattrValue, xattrSetFlag,
               snapshotName, oldSnapshotName, excludeDatanodes,
-              createFlagParam, noredirect, policyName);
+              createFlagParam, noredirect, policyName, ecpolicy);
       }
     });
   }
@@ -634,7 +653,8 @@ public class NamenodeWebHdfsMethods {
       final ExcludeDatanodesParam exclDatanodes,
       final CreateFlagParam createFlagParam,
       final NoRedirectParam noredirectParam,
-      final StoragePolicyParam policyName
+      final StoragePolicyParam policyName,
+      final ECPolicyParam ecpolicy
       ) throws IOException, URISyntaxException {
     final Configuration conf = (Configuration)context.getAttribute(JspHelper.CURRENT_CONF);
     final ClientProtocol cp = getRpcClientProtocol();
@@ -795,6 +815,22 @@ public class NamenodeWebHdfsMethods {
       cp.setStoragePolicy(fullpath, policyName.getValue());
       return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
     }
+    case SATISFYSTORAGEPOLICY:
+      cp.satisfyStoragePolicy(fullpath);
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
+
+    case ENABLEECPOLICY:
+      validateOpParams(op, ecpolicy);
+      cp.enableErasureCodingPolicy(ecpolicy.getValue());
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
+    case DISABLEECPOLICY:
+      validateOpParams(op, ecpolicy);
+      cp.disableErasureCodingPolicy(ecpolicy.getValue());
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
+    case SETECPOLICY:
+      validateOpParams(op, ecpolicy);
+      cp.setErasureCodingPolicy(fullpath, ecpolicy.getValue());
+      return Response.ok().type(MediaType.APPLICATION_OCTET_STREAM).build();
     default:
       throw new UnsupportedOperationException(op + " is not supported");
     }
@@ -922,6 +958,9 @@ public class NamenodeWebHdfsMethods {
       cp.unsetStoragePolicy(fullpath);
       return Response.ok().build();
     }
+    case UNSETECPOLICY:
+      cp.unsetErasureCodingPolicy(fullpath);
+      return Response.ok().build();
     default:
       throw new UnsupportedOperationException(op + " is not supported");
     }
@@ -1230,6 +1269,11 @@ public class NamenodeWebHdfsMethods {
     case GETSTORAGEPOLICY: {
       BlockStoragePolicy storagePolicy = cp.getStoragePolicy(fullpath);
       final String js = JsonUtil.toJsonString(storagePolicy);
+      return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
+    }
+    case GETECPOLICY: {
+      ErasureCodingPolicy ecpolicy = cp.getErasureCodingPolicy(fullpath);
+      final String js = JsonUtil.toJsonString(ecpolicy);
       return Response.ok(js).type(MediaType.APPLICATION_JSON).build();
     }
     case GETSERVERDEFAULTS: {

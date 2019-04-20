@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.ozone.container.ozoneimpl;
 
+import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.client.BlockID;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
@@ -29,11 +30,14 @@ import org.apache.hadoop.hdds.scm.TestUtils;
 import org.apache.hadoop.hdds.scm.XceiverClientGrpc;
 import org.apache.hadoop.hdds.scm.XceiverClientSpi;
 import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
+import org.apache.hadoop.ozone.container.common.statemachine.DatanodeStateMachine;
+import org.apache.hadoop.ozone.container.common.statemachine.StateContext;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.Timeout;
+import org.mockito.Mockito;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -72,11 +76,14 @@ public class TestOzoneContainer {
       conf.setBoolean(
           OzoneConfigKeys.DFS_CONTAINER_IPC_RANDOM_PORT, false);
 
-      container = new OzoneContainer(TestUtils.randomDatanodeDetails(),
-          conf, null);
-      //Setting scmId, as we start manually ozone container.
-      container.getDispatcher().setScmId(UUID.randomUUID().toString());
-      container.start();
+      DatanodeDetails datanodeDetails = TestUtils.randomDatanodeDetails();
+      StateContext context = Mockito.mock(StateContext.class);
+      DatanodeStateMachine dsm = Mockito.mock(DatanodeStateMachine.class);
+      Mockito.when(dsm.getDatanodeDetails()).thenReturn(datanodeDetails);
+      Mockito.when(context.getParent()).thenReturn(dsm);
+      container = new OzoneContainer(datanodeDetails, conf, context, null);
+      //Set scmId and manually start ozone container.
+      container.start(UUID.randomUUID().toString());
 
       XceiverClientGrpc client = new XceiverClientGrpc(pipeline, conf);
       client.connect();
@@ -150,7 +157,6 @@ public class TestOzoneContainer {
       response = client.sendCommand(request);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
       // Put Block
       putBlockRequest = ContainerTestHelper.getPutBlockRequest(
@@ -160,8 +166,6 @@ public class TestOzoneContainer {
       response = client.sendCommand(putBlockRequest);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(putBlockRequest.getTraceID()
-          .equals(response.getTraceID()));
 
       // Get Block
       request = ContainerTestHelper.
@@ -179,7 +183,6 @@ public class TestOzoneContainer {
       response = client.sendCommand(request);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
       //Delete Chunk
       request = ContainerTestHelper.getDeleteChunkRequest(
@@ -188,7 +191,6 @@ public class TestOzoneContainer {
       response = client.sendCommand(request);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
       //Update an existing container
       Map<String, String> containerUpdate = new HashMap<String, String>();
@@ -221,7 +223,8 @@ public class TestOzoneContainer {
     XceiverClientGrpc client = null;
     try {
       OzoneConfiguration conf = newOzoneConfiguration();
-
+      conf.set(HddsConfigKeys.OZONE_METADATA_DIRS,
+          tempFolder.getRoot().getPath());
       client = createClientForTesting(conf);
       cluster = MiniOzoneCluster.newBuilder(conf)
           .setRandomContainerPort(false)
@@ -250,8 +253,6 @@ public class TestOzoneContainer {
       ContainerProtos.ContainerCommandResponseProto response
           = client.sendCommand(smallFileRequest);
       Assert.assertNotNull(response);
-      Assert.assertTrue(smallFileRequest.getTraceID()
-          .equals(response.getTraceID()));
 
       final ContainerProtos.ContainerCommandRequestProto getSmallFileRequest
           = ContainerTestHelper.getReadSmallFileRequest(client.getPipeline(),
@@ -279,7 +280,8 @@ public class TestOzoneContainer {
     try {
 
       OzoneConfiguration conf = newOzoneConfiguration();
-
+      conf.set(HddsConfigKeys.OZONE_METADATA_DIRS,
+          tempFolder.getRoot().getPath());
       client = createClientForTesting(conf);
       cluster = MiniOzoneCluster.newBuilder(conf)
           .setRandomContainerPort(false)
@@ -300,8 +302,6 @@ public class TestOzoneContainer {
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS,
           response.getResult());
-      Assert.assertTrue(
-          putBlockRequest.getTraceID().equals(response.getTraceID()));
 
       // Close the contianer.
       request = ContainerTestHelper.getCloseContainer(
@@ -309,7 +309,6 @@ public class TestOzoneContainer {
       response = client.sendCommand(request);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
 
       // Assert that none of the write  operations are working after close.
@@ -320,8 +319,6 @@ public class TestOzoneContainer {
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.CLOSED_CONTAINER_IO,
           response.getResult());
-      Assert.assertTrue(
-          writeChunkRequest.getTraceID().equals(response.getTraceID()));
 
       // Read chunk must work on a closed container.
       request = ContainerTestHelper.getReadChunkRequest(client.getPipeline(),
@@ -329,16 +326,12 @@ public class TestOzoneContainer {
       response = client.sendCommand(request);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
-
 
       // Put block will fail on a closed container.
       response = client.sendCommand(putBlockRequest);
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.CLOSED_CONTAINER_IO,
           response.getResult());
-      Assert.assertTrue(putBlockRequest.getTraceID()
-          .equals(response.getTraceID()));
 
       // Get block must work on the closed container.
       request = ContainerTestHelper.getBlockRequest(client.getPipeline(),
@@ -356,7 +349,6 @@ public class TestOzoneContainer {
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.CLOSED_CONTAINER_IO,
           response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
     } finally {
       if (client != null) {
         client.close();
@@ -376,7 +368,8 @@ public class TestOzoneContainer {
         writeChunkRequest, putBlockRequest;
     try {
       OzoneConfiguration conf = newOzoneConfiguration();
-
+      conf.set(HddsConfigKeys.OZONE_METADATA_DIRS,
+          tempFolder.getRoot().getPath());
       client = createClientForTesting(conf);
       cluster = MiniOzoneCluster.newBuilder(conf)
           .setRandomContainerPort(false)
@@ -396,40 +389,18 @@ public class TestOzoneContainer {
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS,
           response.getResult());
-      Assert.assertTrue(
-          putBlockRequest.getTraceID().equals(response.getTraceID()));
 
-      // Container cannot be deleted forcibly because
-      // the container is not closed.
-      request = ContainerTestHelper.getDeleteContainer(
-          client.getPipeline(), containerID, true);
-      response = client.sendCommand(request);
-
-      Assert.assertNotNull(response);
-      Assert.assertEquals(ContainerProtos.Result.DELETE_ON_OPEN_CONTAINER,
-          response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
-
-      // Close the container.
-      request = ContainerTestHelper.getCloseContainer(
-          client.getPipeline(), containerID);
-      response = client.sendCommand(request);
-      Assert.assertNotNull(response);
-      Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
-
-      // Container cannot be deleted because the container is not empty.
+      // Container cannot be deleted because force flag is set to false and
+      // the container is still open
       request = ContainerTestHelper.getDeleteContainer(
           client.getPipeline(), containerID, false);
       response = client.sendCommand(request);
 
       Assert.assertNotNull(response);
-      Assert.assertEquals(ContainerProtos.Result.ERROR_CONTAINER_NOT_EMPTY,
+      Assert.assertEquals(ContainerProtos.Result.DELETE_ON_OPEN_CONTAINER,
           response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
-      // Container can be deleted forcibly because
-      // it is closed and non-empty.
+      // Container can be deleted, by setting force flag, even with out closing
       request = ContainerTestHelper.getDeleteContainer(
           client.getPipeline(), containerID, true);
       response = client.sendCommand(request);
@@ -437,7 +408,6 @@ public class TestOzoneContainer {
       Assert.assertNotNull(response);
       Assert.assertEquals(ContainerProtos.Result.SUCCESS,
           response.getResult());
-      Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
 
     } finally {
       if (client != null) {
@@ -494,7 +464,8 @@ public class TestOzoneContainer {
     XceiverClientGrpc client = null;
     try {
       OzoneConfiguration conf = newOzoneConfiguration();
-
+      conf.set(HddsConfigKeys.OZONE_METADATA_DIRS,
+          tempFolder.getRoot().getPath());
       client = createClientForTesting(conf);
       cluster = MiniOzoneCluster.newBuilder(conf)
           .setRandomContainerPort(false)
@@ -531,7 +502,6 @@ public class TestOzoneContainer {
     ContainerProtos.ContainerCommandResponseProto response =
         client.sendCommand(request);
     Assert.assertNotNull(response);
-    Assert.assertTrue(request.getTraceID().equals(response.getTraceID()));
   }
 
   public static ContainerProtos.ContainerCommandRequestProto
@@ -546,30 +516,6 @@ public class TestOzoneContainer {
         client.sendCommand(writeChunkRequest);
     Assert.assertNotNull(response);
     Assert.assertEquals(ContainerProtos.Result.SUCCESS, response.getResult());
-    Assert.assertTrue(response.getTraceID().equals(response.getTraceID()));
     return writeChunkRequest;
   }
-
-  static void runRequestWithoutTraceId(
-          long containerID, XceiverClientSpi client) throws Exception {
-    try {
-      client.connect();
-      createContainerForTesting(client, containerID);
-      BlockID blockID = ContainerTestHelper.getTestBlockID(containerID);
-      final ContainerProtos.ContainerCommandRequestProto smallFileRequest
-              = ContainerTestHelper.getWriteSmallFileRequest(
-              client.getPipeline(), blockID, 1024);
-
-      ContainerProtos.ContainerCommandResponseProto response
-              = client.sendCommand(smallFileRequest);
-      Assert.assertNotNull(response);
-      Assert.assertTrue(smallFileRequest.getTraceID()
-              .equals(response.getTraceID()));
-    } finally {
-      if (client != null) {
-        client.close();
-      }
-    }
-  }
-
 }

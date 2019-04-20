@@ -82,7 +82,7 @@ import static org.apache.hadoop.yarn.server.nodemanager.containermanager.linux.r
  * mapping the application owner to a UID on the execution host, resource
  * management through Linux CGROUPS, and Docker support.</p>
  *
- * <p>If {@code hadoop.security.authetication} is set to {@code simple},
+ * <p>If {@code hadoop.security.authentication} is set to {@code simple},
  * then the
  * {@code yarn.nodemanager.linux-container-executor.nonsecure-mode.limit-users}
  * property will determine whether the {@code LinuxContainerExecutor} runs
@@ -272,7 +272,7 @@ public class LinuxContainerExecutor extends ContainerExecutor {
    * Add a niceness level to the process that will be executed.  Adds
    * {@code -n <nice>} to the given command. The niceness level will be
    * taken from the
-   * {@code yarn.nodemanager.container-executer.os.sched.prioity} property.
+   * {@link YarnConfiguration#NM_CONTAINER_EXECUTOR_SCHED_PRIORITY} property.
    *
    * @param command the command to which to add the niceness setting.
    */
@@ -314,12 +314,11 @@ public class LinuxContainerExecutor extends ContainerExecutor {
     try {
       resourceHandlerChain = ResourceHandlerModule
           .getConfiguredResourceHandlerChain(conf, nmContext);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Resource handler chain enabled = " + (resourceHandlerChain
-            != null));
-      }
+      LOG.debug("Resource handler chain enabled = {}",
+          (resourceHandlerChain != null));
       if (resourceHandlerChain != null) {
-        LOG.debug("Bootstrapping resource handler chain");
+        LOG.debug("Bootstrapping resource handler chain: {}",
+            resourceHandlerChain);
         resourceHandlerChain.bootstrap(conf);
       }
     } catch (ResourceHandlerException e) {
@@ -596,10 +595,10 @@ public class LinuxContainerExecutor extends ContainerExecutor {
           + containerId + " and exit code: " + exitCode, e);
 
       StringBuilder builder = new StringBuilder();
-      builder.append("Exception from container-launch.\n");
-      builder.append("Container id: " + containerId + "\n");
-      builder.append("Exit code: " + exitCode + "\n");
-      builder.append("Exception message: " + e.getMessage() + "\n");
+      builder.append("Exception from container-launch.\n")
+          .append("Container id: " + containerId + "\n")
+          .append("Exit code: " + exitCode + "\n")
+          .append("Exception message: " + e.getMessage() + "\n");
       if (!Optional.fromNullable(e.getErrorOutput()).or("").isEmpty()) {
         builder.append("Shell error output: " + e.getErrorOutput() + "\n");
       }
@@ -1037,4 +1036,9 @@ public class LinuxContainerExecutor extends ContainerExecutor {
     }
   }
 
+  @Override
+  public String getExposedPorts(Container container)
+      throws ContainerExecutionException {
+    return linuxContainerRuntime.getExposedPorts(container);
+  }
 }

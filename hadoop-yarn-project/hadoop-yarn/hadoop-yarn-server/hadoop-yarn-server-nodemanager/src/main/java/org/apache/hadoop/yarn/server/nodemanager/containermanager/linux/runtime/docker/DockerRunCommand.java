@@ -159,6 +159,17 @@ public class DockerRunCommand extends DockerCommand {
     return this;
   }
 
+  /* Ports mapping for bridge network, -p */
+  public DockerRunCommand addPortsMapping(String mapping) {
+    super.addCommandArguments("ports-mapping", mapping);
+    return this;
+  }
+
+  public DockerRunCommand addRuntime(String runtime) {
+    super.addCommandArguments("runtime", runtime);
+    return this;
+  }
+
   public DockerRunCommand groupAdd(String[] groups) {
     super.addCommandArguments("group-add", String.join(",", groups));
     return this;

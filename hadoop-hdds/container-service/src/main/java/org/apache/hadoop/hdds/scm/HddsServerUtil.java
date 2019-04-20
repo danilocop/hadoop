@@ -161,6 +161,29 @@ public final class HddsServerUtil {
   }
 
   /**
+   * Retrieve the socket address that should be used by scm security server to
+   * service clients.
+   *
+   * @param conf
+   * @return Target InetSocketAddress for the SCM security service.
+   */
+  public static InetSocketAddress getScmSecurityInetAddress(
+      Configuration conf) {
+    final Optional<String> host = getHostNameFromConfigKeys(conf,
+        ScmConfigKeys.OZONE_SCM_SECURITY_SERVICE_BIND_HOST_KEY);
+
+    final Optional<Integer> port = getPortNumberFromConfigKeys(conf,
+        ScmConfigKeys.OZONE_SCM_SECURITY_SERVICE_ADDRESS_KEY);
+
+    return NetUtils.createSocketAddr(
+        host.orElse(ScmConfigKeys.OZONE_SCM_SECURITY_SERVICE_BIND_HOST_DEFAULT)
+            + ":" + port
+            .orElse(conf.getInt(ScmConfigKeys
+                    .OZONE_SCM_SECURITY_SERVICE_PORT_KEY,
+                ScmConfigKeys.OZONE_SCM_SECURITY_SERVICE_PORT_DEFAULT)));
+  }
+
+  /**
    * Retrieve the socket address that should be used by DataNodes to connect
    * to the SCM.
    *
@@ -337,13 +360,38 @@ public final class HddsServerUtil {
             OzoneConfigKeys.DFS_CONTAINER_RATIS_DATANODE_STORAGE_DIR);
 
     if (Strings.isNullOrEmpty(storageDir)) {
-      LOG.warn("Storage directory for Ratis is not configured." +
-          "Mapping Ratis storage under {}. It is a good idea " +
-          "to map this to an SSD disk. Falling back to {}",
-          storageDir, HddsConfigKeys.OZONE_METADATA_DIRS);
-      File metaDirPath = ServerUtils.getOzoneMetaDirPath(conf);
-      storageDir = (new File (metaDirPath, "ratis")).getPath();
+      storageDir = getDefaultRatisDirectory(conf);
     }
     return storageDir;
+  }
+
+  public static String getDefaultRatisDirectory(Configuration conf) {
+    LOG.warn("Storage directory for Ratis is not configured. It is a good " +
+            "idea to map this to an SSD disk. Falling back to {}",
+        HddsConfigKeys.OZONE_METADATA_DIRS);
+    File metaDirPath = ServerUtils.getOzoneMetaDirPath(conf);
+    return (new File(metaDirPath, "ratis")).getPath();
+  }
+
+  /**
+   * Get the path for datanode id file.
+   *
+   * @param conf - Configuration
+   * @return the path of datanode id as string
+   */
+  public static String getDatanodeIdFilePath(Configuration conf) {
+    String dataNodeIDPath = conf.get(ScmConfigKeys.OZONE_SCM_DATANODE_ID);
+    if (dataNodeIDPath == null) {
+      File metaDirPath = ServerUtils.getOzoneMetaDirPath(conf);
+      if (metaDirPath == null) {
+        // this means meta data is not found, in theory should not happen at
+        // this point because should've failed earlier.
+        throw new IllegalArgumentException("Unable to locate meta data" +
+            "directory when getting datanode id path");
+      }
+      dataNodeIDPath = new File(metaDirPath,
+          ScmConfigKeys.OZONE_SCM_DATANODE_ID_PATH_DEFAULT).toString();
+    }
+    return dataNodeIDPath;
   }
 }

@@ -104,7 +104,7 @@ public interface ScmClient extends Closeable {
    * Lists a range of containers and get their info.
    *
    * @param startContainerID start containerID.
-   * @param count count must be > 0.
+   * @param count count must be {@literal >} 0.
    *
    * @return a list of pipeline.
    * @throws IOException
@@ -173,18 +173,34 @@ public interface ScmClient extends Closeable {
       throws IOException;
 
   /**
-   * Check if SCM is in chill mode.
+   * Returns the list of active Pipelines.
    *
-   * @return Returns true if SCM is in chill mode else returns false.
-   * @throws IOException
+   * @return list of Pipeline
+   * @throws IOException in case of any exception
    */
-  boolean inChillMode() throws IOException;
+  List<Pipeline> listPipelines() throws IOException;
 
   /**
-   * Force SCM out of chill mode.
+   * Closes the pipeline given a pipeline ID.
+   *
+   * @param pipelineID PipelineID to close.
+   * @throws IOException In case of exception while closing the pipeline
+   */
+  void closePipeline(HddsProtos.PipelineID pipelineID) throws IOException;
+
+  /**
+   * Check if SCM is in safe mode.
+   *
+   * @return Returns true if SCM is in safe mode else returns false.
+   * @throws IOException
+   */
+  boolean inSafeMode() throws IOException;
+
+  /**
+   * Force SCM out of safe mode.
    *
    * @return returns true if operation is successful.
    * @throws IOException
    */
-  boolean forceExitChillMode() throws IOException;
+  boolean forceExitSafeMode() throws IOException;
 }

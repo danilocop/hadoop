@@ -60,6 +60,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
@@ -70,7 +71,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
 
   private static final String SAMPLE_APP_PREFIX_CACHE_TEST = "1234_000";
   private static final int CACHE_TEST_CACHE_SIZE = 5;
-  
+
   private static final String TEST_SUMMARY_LOG_FILE_NAME
       = EntityGroupFSTimelineStore.SUMMARY_LOG_PREFIX + "test";
   private static final String TEST_DOMAIN_LOG_FILE_NAME
@@ -234,6 +235,8 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
     Path pathAfter = appLogs.getAppDirPath();
     assertNotEquals(pathBefore, pathAfter);
     assertTrue(pathAfter.toString().contains(testDoneDirPath.toString()));
+
+    fs.delete(pathAfter, true);
   }
 
   @Test
@@ -412,7 +415,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
     TimelineEntities entities = tdm.getEntities("type_1", null, null, null,
         null, null, null, null, EnumSet.allOf(TimelineReader.Field.class),
         UserGroupInformation.getLoginUser());
-    assertEquals(entities.getEntities().size(), 1);
+    assertThat(entities.getEntities()).hasSize(1);
     for (TimelineEntity entity : entities.getEntities()) {
       assertEquals((Long) 123L, entity.getStartTime());
     }
@@ -483,7 +486,7 @@ public class TestEntityGroupFSTimelineStore extends TimelineStoreTestUtils {
       AppState appstate) {
     // stop before creating new store to get the lock
     store.stop();
-    
+
     EntityGroupFSTimelineStore newStore = new EntityGroupFSTimelineStore() {
       @Override
       protected AppState getAppState(ApplicationId appId) throws IOException {

@@ -25,13 +25,14 @@ import org.apache.hadoop.hdds.scm.container.ContainerID;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.util.Collection;
 import java.util.List;
-import java.util.Set;
+import java.util.NavigableSet;
 
 /**
  * Interface which exposes the api for pipeline management.
  */
-public interface PipelineManager extends Closeable {
+public interface PipelineManager extends Closeable, PipelineManagerMXBean {
 
   Pipeline createPipeline(ReplicationType type, ReplicationFactor factor)
       throws IOException;
@@ -41,6 +42,8 @@ public interface PipelineManager extends Closeable {
 
   Pipeline getPipeline(PipelineID pipelineID) throws PipelineNotFoundException;
 
+  List<Pipeline> getPipelines();
+
   List<Pipeline> getPipelines(ReplicationType type);
 
   List<Pipeline> getPipelines(ReplicationType type,
@@ -49,20 +52,27 @@ public interface PipelineManager extends Closeable {
   List<Pipeline> getPipelines(ReplicationType type,
       ReplicationFactor factor, Pipeline.PipelineState state);
 
+  List<Pipeline> getPipelines(ReplicationType type, ReplicationFactor factor,
+      Pipeline.PipelineState state, Collection<DatanodeDetails> excludeDns,
+      Collection<PipelineID> excludePipelines);
+
   void addContainerToPipeline(PipelineID pipelineID, ContainerID containerID)
       throws IOException;
 
   void removeContainerFromPipeline(PipelineID pipelineID,
       ContainerID containerID) throws IOException;
 
-  Set<ContainerID> getContainersInPipeline(PipelineID pipelineID)
+  NavigableSet<ContainerID> getContainersInPipeline(PipelineID pipelineID)
       throws IOException;
 
   int getNumberOfContainers(PipelineID pipelineID) throws IOException;
 
-  void finalizePipeline(PipelineID pipelineID) throws IOException;
-
   void openPipeline(PipelineID pipelineId) throws IOException;
 
-  void removePipeline(PipelineID pipelineID) throws IOException;
+  void finalizeAndDestroyPipeline(Pipeline pipeline, boolean onTimeout)
+      throws IOException;
+
+  void startPipelineCreator();
+
+  void triggerPipelineCreation();
 }

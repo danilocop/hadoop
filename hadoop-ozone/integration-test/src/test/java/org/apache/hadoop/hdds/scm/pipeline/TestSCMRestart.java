@@ -58,7 +58,7 @@ public class TestSCMRestart {
   public static void init() throws Exception {
     conf = new OzoneConfiguration();
     cluster = MiniOzoneCluster.newBuilder(conf)
-        .setNumDatanodes(6)
+        .setNumDatanodes(4)
         .setHbInterval(1000)
         .setHbProcessorInterval(1000)
         .build();
@@ -75,7 +75,7 @@ public class TestSCMRestart {
     // At this stage, there should be 2 pipeline one with 1 open container
     // each. Try restarting the SCM and then discover that pipeline are in
     // correct state.
-    cluster.restartStorageContainerManager();
+    cluster.restartStorageContainerManager(true);
     newContainerManager = cluster.getStorageContainerManager()
         .getContainerManager();
     pipelineManager = cluster.getStorageContainerManager().getPipelineManager();

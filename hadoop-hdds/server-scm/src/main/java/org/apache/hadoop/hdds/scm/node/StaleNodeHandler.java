@@ -18,7 +18,10 @@
 
 package org.apache.hadoop.hdds.scm.node;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdds.conf.OzoneConfiguration;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
+import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
 import org.apache.hadoop.hdds.scm.pipeline.PipelineManager;
 import org.apache.hadoop.hdds.server.events.EventHandler;
@@ -38,21 +41,26 @@ public class StaleNodeHandler implements EventHandler<DatanodeDetails> {
 
   private final NodeManager nodeManager;
   private final PipelineManager pipelineManager;
+  private final Configuration conf;
 
   public StaleNodeHandler(NodeManager nodeManager,
-      PipelineManager pipelineManager) {
+      PipelineManager pipelineManager, OzoneConfiguration conf) {
     this.nodeManager = nodeManager;
     this.pipelineManager = pipelineManager;
+    this.conf = conf;
   }
 
   @Override
   public void onMessage(DatanodeDetails datanodeDetails,
-                        EventPublisher publisher) {
+      EventPublisher publisher) {
     Set<PipelineID> pipelineIds =
         nodeManager.getPipelines(datanodeDetails);
+    LOG.info("Datanode {} moved to stale state. Finalizing its pipelines {}",
+        datanodeDetails, pipelineIds);
     for (PipelineID pipelineID : pipelineIds) {
       try {
-        pipelineManager.finalizePipeline(pipelineID);
+        Pipeline pipeline = pipelineManager.getPipeline(pipelineID);
+        pipelineManager.finalizeAndDestroyPipeline(pipeline, true);
       } catch (IOException e) {
         LOG.info("Could not finalize pipeline={} for dn={}", pipelineID,
             datanodeDetails);

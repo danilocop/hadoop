@@ -67,6 +67,8 @@ import java.util.concurrent.TimeoutException;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Multimap;
+import org.apache.hadoop.hdfs.server.common.blockaliasmap.BlockAliasMap;
+import org.apache.hadoop.hdfs.server.common.blockaliasmap.impl.InMemoryLevelDBAliasMapClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
@@ -2401,14 +2403,19 @@ public class MiniDFSCluster implements AutoCloseable {
     return restartDataNode(dnprop, false);
   }
 
-  private void waitDataNodeFullyStarted(final DataNode dn)
+  public void waitDatanodeFullyStarted(DataNode dn, int timeout)
       throws TimeoutException, InterruptedException {
     GenericTestUtils.waitFor(new Supplier<Boolean>() {
       @Override
       public Boolean get() {
         return dn.isDatanodeFullyStarted();
       }
-    }, 100, 60000);
+    }, 100, timeout);
+  }
+
+  private void waitDataNodeFullyStarted(final DataNode dn)
+      throws TimeoutException, InterruptedException {
+    waitDatanodeFullyStarted(dn, 60000);
   }
 
   /**
@@ -2644,8 +2651,20 @@ public class MiniDFSCluster implements AutoCloseable {
     getNameNode(nnIndex).getRpcServer().transitionToStandby(
         new StateChangeRequestInfo(RequestSource.REQUEST_BY_USER_FORCED));
   }
-  
-  
+
+  public void transitionToObserver(int nnIndex) throws IOException,
+      ServiceFailedException {
+    getNameNode(nnIndex).getRpcServer().transitionToObserver(
+        new StateChangeRequestInfo(RequestSource.REQUEST_BY_USER_FORCED));
+  }
+
+  public void rollEditLogAndTail(int nnIndex) throws Exception {
+    getNameNode(nnIndex).getRpcServer().rollEditLog();
+    for (int i = 2; i < getNumNameNodes(); i++) {
+      getNameNode(i).getNamesystem().getEditLogTailer().doTailEdits();
+    }
+  }
+
   public void triggerBlockReports()
       throws IOException {
     for (DataNode dn : getDataNodes()) {
@@ -3310,6 +3329,27 @@ public class MiniDFSCluster implements AutoCloseable {
     } finally {
       writer.close();
     }
+  }
+
+  /**
+   * Setup the namenode-level PROVIDED configurations, using the
+   * {@link InMemoryLevelDBAliasMapClient}.
+   *
+   * @param conf Configuration, which is modified, to enable provided storage.
+   *        This cannot be null.
+   */
+  public static void setupNamenodeProvidedConfiguration(Configuration conf) {
+    conf.setBoolean(DFSConfigKeys.DFS_NAMENODE_PROVIDED_ENABLED, true);
+    conf.setBoolean(DFSConfigKeys.DFS_PROVIDED_ALIASMAP_INMEMORY_ENABLED, true);
+    conf.setClass(DFSConfigKeys.DFS_PROVIDED_ALIASMAP_CLASS,
+        InMemoryLevelDBAliasMapClient.class, BlockAliasMap.class);
+    File tempDirectory = new File(GenericTestUtils.getRandomizedTestDir(),
+        "in-memory-alias-map");
+    conf.set(DFSConfigKeys.DFS_PROVIDED_ALIASMAP_INMEMORY_LEVELDB_DIR,
+        tempDirectory.getAbsolutePath());
+    conf.setInt(DFSConfigKeys.DFS_PROVIDED_ALIASMAP_LOAD_RETRIES, 10);
+    conf.set(DFSConfigKeys.DFS_PROVIDED_ALIASMAP_LEVELDB_PATH,
+        tempDirectory.getAbsolutePath());
   }
 
   @Override

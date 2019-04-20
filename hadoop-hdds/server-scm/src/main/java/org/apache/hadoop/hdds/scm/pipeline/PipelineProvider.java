@@ -32,4 +32,5 @@ public interface PipelineProvider {
   Pipeline create(ReplicationFactor factor) throws IOException;
 
   Pipeline create(ReplicationFactor factor, List<DatanodeDetails> nodes);
+
 }

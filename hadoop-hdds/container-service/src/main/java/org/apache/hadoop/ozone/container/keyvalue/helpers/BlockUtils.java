@@ -95,7 +95,7 @@ public final class BlockUtils {
     Preconditions.checkNotNull(container);
     ContainerCache cache = ContainerCache.getInstance(conf);
     Preconditions.checkNotNull(cache);
-    cache.removeDB(container.getContainerID());
+    cache.removeDB(container.getDbFile().getAbsolutePath());
   }
 
   /**
@@ -133,12 +133,12 @@ public final class BlockUtils {
    * @return Response.
    */
   public static ContainerCommandResponseProto putBlockResponseSuccess(
-      ContainerCommandRequestProto msg, long blockLength) {
-    ContainerProtos.BlockData blockData = msg.getPutBlock().getBlockData();
+      ContainerCommandRequestProto msg, BlockData blockData) {
+    ContainerProtos.BlockData blockDataProto = blockData.getProtoBufMessage();
     GetCommittedBlockLengthResponseProto.Builder
         committedBlockLengthResponseBuilder =
-        getCommittedBlockLengthResponseBuilder(blockLength,
-            blockData.getBlockID());
+        getCommittedBlockLengthResponseBuilder(blockData.getSize(),
+            blockDataProto.getBlockID());
     PutBlockResponseProto.Builder putKeyResponse =
         PutBlockResponseProto.newBuilder();
     putKeyResponse

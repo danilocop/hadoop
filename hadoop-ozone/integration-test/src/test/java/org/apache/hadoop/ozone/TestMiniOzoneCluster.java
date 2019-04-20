@@ -18,6 +18,7 @@
 
 package org.apache.hadoop.ozone;
 
+import org.apache.commons.lang3.RandomUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hdds.HddsConfigKeys;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
@@ -123,6 +124,10 @@ public class TestMiniOzoneCluster {
     id2.setPort(DatanodeDetails.newPort(Port.Name.STANDALONE, 2));
     id3.setPort(DatanodeDetails.newPort(Port.Name.STANDALONE, 3));
 
+    // Add certificate serial  id.
+    String certSerialId = "" + RandomUtils.nextLong();
+    id1.setCertSerialId(certSerialId);
+
     // Write a single ID to the file and read it out
     File validIdsFile = new File(WRITE_TMP, "valid-values.id");
     validIdsFile.delete();
@@ -130,6 +135,7 @@ public class TestMiniOzoneCluster {
     DatanodeDetails validId = ContainerUtils.readDatanodeDetailsFrom(
         validIdsFile);
 
+    assertEquals(validId.getCertSerialId(), certSerialId);
     assertEquals(id1, validId);
     assertEquals(id1.getProtoBufMessage(), validId.getProtoBufMessage());
 
@@ -169,21 +175,21 @@ public class TestMiniOzoneCluster {
         true);
     try (
         DatanodeStateMachine sm1 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf);
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null);
         DatanodeStateMachine sm2 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf);
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null);
         DatanodeStateMachine sm3 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf)
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null)
     ) {
       HashSet<Integer> ports = new HashSet<Integer>();
-      assertTrue(ports.add(sm1.getContainer().getContainerServerPort()));
-      assertTrue(ports.add(sm2.getContainer().getContainerServerPort()));
-      assertTrue(ports.add(sm3.getContainer().getContainerServerPort()));
+      assertTrue(ports.add(sm1.getContainer().getReadChannel().getIPCPort()));
+      assertTrue(ports.add(sm2.getContainer().getReadChannel().getIPCPort()));
+      assertTrue(ports.add(sm3.getContainer().getReadChannel().getIPCPort()));
 
       // Assert that ratis is also on a different port.
-      assertTrue(ports.add(sm1.getContainer().getRatisContainerServerPort()));
-      assertTrue(ports.add(sm2.getContainer().getRatisContainerServerPort()));
-      assertTrue(ports.add(sm3.getContainer().getRatisContainerServerPort()));
+      assertTrue(ports.add(sm1.getContainer().getWriteChannel().getIPCPort()));
+      assertTrue(ports.add(sm2.getContainer().getWriteChannel().getIPCPort()));
+      assertTrue(ports.add(sm3.getContainer().getWriteChannel().getIPCPort()));
 
 
     }
@@ -192,16 +198,16 @@ public class TestMiniOzoneCluster {
     ozoneConf.setBoolean(OzoneConfigKeys.DFS_CONTAINER_IPC_RANDOM_PORT, false);
     try (
         DatanodeStateMachine sm1 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf);
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null);
         DatanodeStateMachine sm2 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf);
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null);
         DatanodeStateMachine sm3 = new DatanodeStateMachine(
-            TestUtils.randomDatanodeDetails(), ozoneConf)
+            TestUtils.randomDatanodeDetails(), ozoneConf,  null)
     ) {
       HashSet<Integer> ports = new HashSet<Integer>();
-      assertTrue(ports.add(sm1.getContainer().getContainerServerPort()));
-      assertFalse(ports.add(sm2.getContainer().getContainerServerPort()));
-      assertFalse(ports.add(sm3.getContainer().getContainerServerPort()));
+      assertTrue(ports.add(sm1.getContainer().getReadChannel().getIPCPort()));
+      assertFalse(ports.add(sm2.getContainer().getReadChannel().getIPCPort()));
+      assertFalse(ports.add(sm3.getContainer().getReadChannel().getIPCPort()));
       assertEquals(ports.iterator().next().intValue(),
           conf.getInt(OzoneConfigKeys.DFS_CONTAINER_IPC_PORT,
               OzoneConfigKeys.DFS_CONTAINER_IPC_PORT_DEFAULT));
@@ -254,7 +260,7 @@ public class TestMiniOzoneCluster {
 
     // DN should successfully register with the SCM after SCM is restarted.
     // Restart the SCM
-    cluster.restartStorageContainerManager();
+    cluster.restartStorageContainerManager(true);
     // Wait for DN to register
     cluster.waitForClusterToBeReady();
     // DN should be in HEARTBEAT state after registering with the SCM

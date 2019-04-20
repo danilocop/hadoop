@@ -20,8 +20,10 @@ package org.apache.hadoop.ozone.web.ozShell.keys;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.HashMap;
 
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.StorageUnit;
 import org.apache.hadoop.hdds.client.ReplicationFactor;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.hdds.conf.OzoneConfiguration;
@@ -104,10 +106,11 @@ public class PutKeyHandler extends Handler {
     OzoneBucket bucket = vol.getBucket(bucketName);
     OzoneOutputStream outputStream = bucket
         .createKey(keyName, dataFile.length(), replicationType,
-            replicationFactor);
+            replicationFactor, new HashMap<>());
     FileInputStream fileInputStream = new FileInputStream(dataFile);
-    IOUtils.copyBytes(fileInputStream, outputStream,
-        conf.getInt(OZONE_SCM_CHUNK_SIZE_KEY, OZONE_SCM_CHUNK_SIZE_DEFAULT));
+    IOUtils.copyBytes(fileInputStream, outputStream, (int) conf
+        .getStorageSize(OZONE_SCM_CHUNK_SIZE_KEY, OZONE_SCM_CHUNK_SIZE_DEFAULT,
+            StorageUnit.BYTES));
     outputStream.close();
     fileInputStream.close();
     return null;

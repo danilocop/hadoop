@@ -32,6 +32,8 @@ import org.apache.hadoop.fs.FileAlreadyExistsException;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos;
 import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
+    .ContainerDataProto;
+import org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .ContainerType;
 import org.apache.hadoop.hdds.protocol.proto
     .StorageContainerDatanodeProtocolProtos.ContainerReplicaProto;
@@ -62,6 +64,7 @@ import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Result.CONTAINER_FILES_CREATE_ERROR;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Result.CONTAINER_INTERNAL_ERROR;
+import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos.Result.CONTAINER_NOT_OPEN;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Result.DISK_OUT_OF_SPACE;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
@@ -70,6 +73,7 @@ import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Result.INVALID_CONTAINER_STATE;
 import static org.apache.hadoop.hdds.protocol.datanode.proto.ContainerProtos
     .Result.UNSUPPORTED_REQUEST;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -107,8 +111,8 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
 
     File containerMetaDataPath = null;
     //acquiring volumeset read lock
-    volumeSet.readLock();
     long maxSize = containerData.getMaxSize();
+    volumeSet.readLock();
     try {
       HddsVolume containerVolume = volumeChoosingPolicy.chooseVolume(volumeSet
           .getVolumesList(), maxSize);
@@ -249,11 +253,10 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
 
 
   @Override
-  public void delete(boolean forceDelete)
-      throws StorageContainerException {
+  public void delete() throws StorageContainerException {
     long containerId = containerData.getContainerID();
     try {
-      KeyValueContainerUtil.removeContainer(containerData, config, forceDelete);
+      KeyValueContainerUtil.removeContainer(containerData, config);
     } catch (StorageContainerException ex) {
       throw ex;
     } catch (IOException ex) {
@@ -267,32 +270,90 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
   }
 
   @Override
-  public void close() throws StorageContainerException {
-
-    //TODO: writing .container file and compaction can be done
-    // asynchronously, otherwise rpc call for this will take a lot of time to
-    // complete this action
+  public void markContainerForClose() throws StorageContainerException {
+    writeLock();
     try {
-      writeLock();
+      if (getContainerState() != ContainerDataProto.State.OPEN) {
+        throw new StorageContainerException(
+            "Attempting to close a " + getContainerState() + " container.",
+            CONTAINER_NOT_OPEN);
+      }
+      updateContainerData(() ->
+          containerData.setState(ContainerDataProto.State.CLOSING));
+    } finally {
+      writeUnlock();
+    }
+  }
 
-      containerData.closeContainer();
-      File containerFile = getContainerFile();
-      // update the new container data to .container File
-      updateContainerFile(containerFile);
+  @Override
+  public void markContainerUnhealthy() throws StorageContainerException {
+    writeLock();
+    try {
+      updateContainerData(() ->
+          containerData.setState(ContainerDataProto.State.UNHEALTHY));
+    } finally {
+      writeUnlock();
+    }
+  }
 
-    } catch (StorageContainerException ex) {
-      // Failed to update .container file. Reset the state to CLOSING
-      containerData.setState(ContainerProtos.ContainerDataProto.State.CLOSING);
-      throw ex;
+  @Override
+  public void quasiClose() throws StorageContainerException {
+    writeLock();
+    try {
+      updateContainerData(containerData::quasiCloseContainer);
+    } finally {
+      writeUnlock();
+    }
+  }
+
+  @Override
+  public void close() throws StorageContainerException {
+    writeLock();
+    try {
+      updateContainerData(containerData::closeContainer);
     } finally {
       writeUnlock();
     }
 
     // It is ok if this operation takes a bit of time.
     // Close container is not expected to be instantaneous.
+    compactDB();
+  }
+
+  /**
+   *
+   * Must be invoked with the writeLock held.
+   *
+   * @param update
+   * @throws StorageContainerException
+   */
+  private void updateContainerData(Runnable update)
+      throws StorageContainerException {
+    Preconditions.checkState(hasWriteLock());
+    ContainerDataProto.State oldState = null;
+    try {
+      oldState = containerData.getState();
+      update.run();
+      File containerFile = getContainerFile();
+      // update the new container data to .container File
+      updateContainerFile(containerFile);
+
+    } catch (StorageContainerException ex) {
+      if (oldState != null) {
+        // Failed to update .container file. Reset the state to CLOSING
+        containerData.setState(oldState);
+      }
+      throw ex;
+    }
+  }
+
+  void compactDB() throws StorageContainerException {
     try {
       MetadataStore db = BlockUtils.getDB(containerData, config);
       db.compactDB();
+      LOG.info("Container {} is closed with bcsId {}.",
+          containerData.getContainerID(),
+          containerData.getBlockCommitSequenceId());
     } catch (StorageContainerException ex) {
       throw ex;
     } catch (IOException ex) {
@@ -317,7 +378,8 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
   }
 
   @Override
-  public void update(Map<String, String> metadata, boolean forceUpdate)
+  public void update(
+      Map<String, String> metadata, boolean forceUpdate)
       throws StorageContainerException {
 
     // TODO: Now, when writing the updated data to .container file, we are
@@ -503,8 +565,13 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
    */
   @Override
   public File getContainerFile() {
-    return new File(containerData.getMetadataPath(), containerData
-        .getContainerID() + OzoneConsts.CONTAINER_EXTENSION);
+    return getContainerFile(containerData.getMetadataPath(),
+            containerData.getContainerID());
+  }
+
+  static File getContainerFile(String metadataPath, long containerId) {
+    return new File(metadataPath,
+        containerId + OzoneConsts.CONTAINER_EXTENSION);
   }
 
   @Override
@@ -530,7 +597,8 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
         .setUsed(containerData.getBytesUsed())
         .setState(getHddsState())
         .setDeleteTransactionId(containerData.getDeleteTransactionId())
-        .setBlockCommitSequenceId(containerData.getBlockCommitSequenceId());
+        .setBlockCommitSequenceId(containerData.getBlockCommitSequenceId())
+        .setOriginNodeId(containerData.getOriginNodeId());
     return ciBuilder.build();
   }
 
@@ -549,8 +617,14 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
     case CLOSING:
       state = ContainerReplicaProto.State.CLOSING;
       break;
+    case QUASI_CLOSED:
+      state = ContainerReplicaProto.State.QUASI_CLOSED;
+      break;
     case CLOSED:
       state = ContainerReplicaProto.State.CLOSED;
+      break;
+    case UNHEALTHY:
+      state = ContainerReplicaProto.State.UNHEALTHY;
       break;
     default:
       throw new StorageContainerException("Invalid Container state found: " +
@@ -566,6 +640,66 @@ public class KeyValueContainer implements Container<KeyValueContainerData> {
   public File getContainerDBFile() {
     return new File(containerData.getMetadataPath(), containerData
         .getContainerID() + OzoneConsts.DN_CONTAINER_DB);
+  }
+
+  /**
+   * run integrity checks on the Container metadata.
+   */
+  public void check() throws StorageContainerException {
+    ContainerCheckLevel level = ContainerCheckLevel.NO_CHECK;
+    long containerId = containerData.getContainerID();
+
+    switch (containerData.getState()) {
+    case OPEN:
+      level = ContainerCheckLevel.FAST_CHECK;
+      LOG.info("Doing Fast integrity checks for Container ID : {},"
+          + " because it is OPEN", containerId);
+      break;
+    case CLOSING:
+      level = ContainerCheckLevel.FAST_CHECK;
+      LOG.info("Doing Fast integrity checks for Container ID : {},"
+          + " because it is CLOSING", containerId);
+      break;
+    case CLOSED:
+    case QUASI_CLOSED:
+      level = ContainerCheckLevel.FULL_CHECK;
+      LOG.debug("Doing Full integrity checks for Container ID : {},"
+              + " because it is in {} state", containerId,
+          containerData.getState());
+      break;
+    default:
+      throw new StorageContainerException(
+          "Invalid Container state found for Container : " + containerData
+              .getContainerID(), INVALID_CONTAINER_STATE);
+    }
+
+    if (level == ContainerCheckLevel.NO_CHECK) {
+      LOG.debug("Skipping integrity checks for Container Id : {}", containerId);
+      return;
+    }
+
+    KeyValueContainerCheck checker =
+        new KeyValueContainerCheck(containerData.getMetadataPath(), config,
+            containerId);
+
+    switch (level) {
+    case FAST_CHECK:
+      checker.fastCheck();
+      break;
+    case FULL_CHECK:
+      checker.fullCheck();
+      break;
+    case NO_CHECK:
+      LOG.debug("Skipping integrity checks for Container Id : {}", containerId);
+      break;
+    default:
+      // we should not be here at all, scuttle the ship!
+      Preconditions.checkNotNull(0, "Invalid Containercheck level");
+    }
+  }
+
+  private enum ContainerCheckLevel {
+    NO_CHECK, FAST_CHECK, FULL_CHECK
   }
 
   /**

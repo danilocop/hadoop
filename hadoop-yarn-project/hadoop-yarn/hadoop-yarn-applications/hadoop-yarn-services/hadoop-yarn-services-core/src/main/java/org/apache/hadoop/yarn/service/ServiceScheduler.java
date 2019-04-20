@@ -115,6 +115,9 @@ import static org.apache.hadoop.yarn.api.records.ContainerExitStatus
     .KILLED_AFTER_APP_COMPLETION;
 import static org.apache.hadoop.yarn.service.api.ServiceApiConstants.*;
 import static org.apache.hadoop.yarn.service.component.ComponentEventType.*;
+import static org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEventType.START;
+import static org.apache.hadoop.yarn.service.conf.YarnServiceConstants
+    .CONTAINER_STATE_REPORT_AS_SERVICE_STATE;
 import static org.apache.hadoop.yarn.service.exceptions.LauncherExitCodes
     .EXIT_FALSE;
 import static org.apache.hadoop.yarn.service.exceptions.LauncherExitCodes
@@ -833,9 +836,8 @@ public class ServiceScheduler extends CompositeService {
         LOG.error("No component instance exists for {}", containerId);
         return;
       }
-      ComponentInstanceEvent becomeReadyEvent = new ComponentInstanceEvent(
-          containerId, ComponentInstanceEventType.BECOME_READY);
-      dispatcher.getEventHandler().handle(becomeReadyEvent);
+      dispatcher.getEventHandler().handle(
+          new ComponentInstanceEvent(containerId, START));
     }
 
     @Override
@@ -946,13 +948,53 @@ public class ServiceScheduler extends CompositeService {
     return hasAtLeastOnePlacementConstraint;
   }
 
+  public boolean terminateServiceIfNeeded(Component component) {
+    boolean serviceIsTerminated =
+        terminateServiceIfDominantComponentFinished(component) ||
+            terminateServiceIfAllComponentsFinished();
+    return serviceIsTerminated;
+  }
+
+  /**
+   * If the service state component is finished, the service is also terminated.
+   * @param component
+   */
+  private boolean terminateServiceIfDominantComponentFinished(Component
+      component) {
+    boolean shouldTerminate = false;
+    boolean componentIsDominant = component.getComponentSpec()
+        .getConfiguration().getPropertyBool(
+            CONTAINER_STATE_REPORT_AS_SERVICE_STATE, false);
+    if (componentIsDominant) {
+      ComponentRestartPolicy restartPolicy =
+          component.getRestartPolicyHandler();
+      if (restartPolicy.shouldTerminate(component)) {
+        shouldTerminate = true;
+        boolean isSucceeded = restartPolicy.hasCompletedSuccessfully(component);
+        org.apache.hadoop.yarn.service.api.records.ComponentState state
+            = isSucceeded ?
+            org.apache.hadoop.yarn.service.api.records.ComponentState.SUCCEEDED
+            : org.apache.hadoop.yarn.service.api.records.ComponentState.FAILED;
+        LOG.info("{} Component state changed from {} to {}",
+            component.getName(), component.getComponentSpec().getState(),
+            state);
+        component.getComponentSpec().setState(state);
+        LOG.info("Dominate component {} finished, exiting Service Master... " +
+                ", final status=" + (isSucceeded ? "Succeeded" : "Failed"),
+            component.getName());
+        terminateService(isSucceeded);
+      }
+    }
+    return shouldTerminate;
+  }
+
   /*
-* Check if all components of the scheduler finished.
-* If all components finished
-*   (which #failed-instances + #suceeded-instances = #total-n-containers)
-* The service will be terminated.
-*/
-  public void terminateServiceIfAllComponentsFinished() {
+   * Check if all components of the scheduler finished.
+   * If all components finished
+   * (which #failed-instances + #suceeded-instances = #total-n-containers)
+   * The service will be terminated.
+  */
+  private boolean terminateServiceIfAllComponentsFinished() {
     boolean shouldTerminate = true;
 
     // Succeeded comps and failed comps, for logging purposes.
@@ -964,19 +1006,19 @@ public class ServiceScheduler extends CompositeService {
 
       if (restartPolicy.shouldTerminate(comp)) {
         if (restartPolicy.hasCompletedSuccessfully(comp)) {
-          comp.getComponentSpec().setState(org.apache.hadoop
-              .yarn.service.api.records.ComponentState.SUCCEEDED);
           LOG.info("{} Component state changed from {} to {}",
               comp.getName(), comp.getComponentSpec().getState(),
               org.apache.hadoop
                   .yarn.service.api.records.ComponentState.SUCCEEDED);
-        } else {
           comp.getComponentSpec().setState(org.apache.hadoop
-              .yarn.service.api.records.ComponentState.FAILED);
+              .yarn.service.api.records.ComponentState.SUCCEEDED);
+        } else {
           LOG.info("{} Component state changed from {} to {}",
               comp.getName(), comp.getComponentSpec().getState(),
               org.apache.hadoop
                   .yarn.service.api.records.ComponentState.FAILED);
+          comp.getComponentSpec().setState(org.apache.hadoop
+              .yarn.service.api.records.ComponentState.FAILED);
         }
 
         if (isTimelineServiceEnabled()) {
@@ -1008,18 +1050,23 @@ public class ServiceScheduler extends CompositeService {
       LOG.info("Failed components: [" + org.apache.commons.lang3.StringUtils
           .join(failedComponents, ",") + "]");
 
-      int exitStatus = EXIT_SUCCESS;
-      if (failedComponents.isEmpty()) {
-        setGracefulStop(FinalApplicationStatus.SUCCEEDED);
-        app.setState(ServiceState.SUCCEEDED);
-      } else {
-        setGracefulStop(FinalApplicationStatus.FAILED);
-        app.setState(ServiceState.FAILED);
-        exitStatus = EXIT_FALSE;
-      }
-
-      getTerminationHandler().terminate(exitStatus);
+      terminateService(failedComponents.isEmpty());
     }
+    return shouldTerminate;
+  }
+
+  private void terminateService(boolean isSucceeded) {
+    int exitStatus = EXIT_SUCCESS;
+    if (isSucceeded) {
+      setGracefulStop(FinalApplicationStatus.SUCCEEDED);
+      app.setState(ServiceState.SUCCEEDED);
+    } else {
+      setGracefulStop(FinalApplicationStatus.FAILED);
+      app.setState(ServiceState.FAILED);
+      exitStatus = EXIT_FALSE;
+    }
+
+    getTerminationHandler().terminate(exitStatus);
   }
 
   public Clock getSystemClock() {
@@ -1065,18 +1112,18 @@ public class ServiceScheduler extends CompositeService {
           } else {
             requestPath.append("http://");
           }
-          requestPath.append(bareHost);
-          requestPath.append(":");
-          requestPath.append(port);
-          requestPath.append("/ws/v1/node/yarn/sysfs/");
-          requestPath.append(UserGroupInformation.getCurrentUser()
-              .getShortUserName());
-          requestPath.append("/");
-          requestPath.append(yarnApp.getId());
+          requestPath.append(bareHost)
+              .append(":")
+              .append(port)
+              .append("/ws/v1/node/yarn/sysfs/")
+              .append(UserGroupInformation.getCurrentUser()
+                  .getShortUserName())
+              .append("/")
+              .append(yarnApp.getId());
           if (!useKerberos) {
-            requestPath.append("?user.name=");
-            requestPath.append(UserGroupInformation.getCurrentUser()
-                .getShortUserName());
+            requestPath.append("?user.name=")
+                .append(UserGroupInformation.getCurrentUser()
+                    .getShortUserName());
           }
           Builder builder = HttpUtil.connect(requestPath.toString());
           ClientResponse response = builder.put(ClientResponse.class, spec);

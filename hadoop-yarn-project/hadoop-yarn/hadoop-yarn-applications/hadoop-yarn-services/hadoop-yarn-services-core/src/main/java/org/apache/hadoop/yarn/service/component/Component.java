@@ -56,6 +56,7 @@ import org.apache.hadoop.yarn.service.monitor.ComponentHealthThresholdMonitor;
 import org.apache.hadoop.yarn.service.monitor.probe.MonitorUtils;
 import org.apache.hadoop.yarn.service.monitor.probe.Probe;
 import org.apache.hadoop.yarn.service.containerlaunch.ContainerLaunchService;
+import org.apache.hadoop.yarn.service.provider.ProviderService;
 import org.apache.hadoop.yarn.service.provider.ProviderUtils;
 import org.apache.hadoop.yarn.service.utils.ServiceApiUtil;
 import org.apache.hadoop.yarn.service.utils.ServiceUtils;
@@ -79,6 +80,7 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -188,13 +190,13 @@ public class Component implements EventHandler<ComponentEvent> {
               new NeedsUpgradeTransition())
           .addTransition(STABLE, CANCEL_UPGRADING, CANCEL_UPGRADE,
               new NeedsUpgradeTransition())
-          .addTransition(STABLE, EnumSet.of(STABLE), CHECK_STABLE,
+          .addTransition(STABLE, EnumSet.of(STABLE, FLEXING), CHECK_STABLE,
               new CheckStableTransition())
 
           // Cancel upgrade while previous upgrade is still in progress
           .addTransition(UPGRADING, CANCEL_UPGRADING,
               CANCEL_UPGRADE, new NeedsUpgradeTransition())
-          .addTransition(UPGRADING, EnumSet.of(UPGRADING, STABLE),
+          .addTransition(UPGRADING, EnumSet.of(UPGRADING, FLEXING, STABLE),
               CHECK_STABLE, new CheckStableTransition())
           .addTransition(UPGRADING, UPGRADING, CONTAINER_COMPLETED,
               new CompletedAfterUpgradeTransition())
@@ -695,19 +697,22 @@ public class Component implements EventHandler<ComponentEvent> {
         "[COMPONENT {}]: Assigned {} to component instance {} and launch on host {} ",
         getName(), container.getId(), instance.getCompInstanceName(),
         container.getNodeId());
+    Future<ProviderService.ResolvedLaunchParams> resolvedParamFuture;
     if (!(upgradeStatus.isCompleted() && cancelUpgradeStatus.isCompleted())) {
       UpgradeStatus status = !cancelUpgradeStatus.isCompleted() ?
           cancelUpgradeStatus : upgradeStatus;
 
-      scheduler.getContainerLaunchService()
+      resolvedParamFuture = scheduler.getContainerLaunchService()
           .launchCompInstance(scheduler.getApp(), instance, container,
               createLaunchContext(status.getTargetSpec(),
                   status.getTargetVersion()));
     } else {
-      scheduler.getContainerLaunchService().launchCompInstance(
+      resolvedParamFuture = scheduler.getContainerLaunchService()
+          .launchCompInstance(
           scheduler.getApp(), instance, container,
           createLaunchContext(componentSpec, scheduler.getApp().getVersion()));
     }
+    instance.updateResolvedLaunchParams(resolvedParamFuture);
   }
 
   public ContainerLaunchService.ComponentLaunchContext createLaunchContext(
@@ -755,6 +760,7 @@ public class Component implements EventHandler<ComponentEvent> {
                 entry.getKey(),
                 specInfo.getUnit(),
                 specInfo.getValue(),
+                specInfo.getTags(),
                 specInfo.getAttributes());
         resource.setResourceInformation(resourceName, ri);
       }
@@ -1084,8 +1090,8 @@ public class Component implements EventHandler<ComponentEvent> {
 
   @Override
   public void handle(ComponentEvent event) {
+    writeLock.lock();
     try {
-      writeLock.lock();
       ComponentState oldState = getState();
       try {
         stateMachine.doTransition(event.getType(), event);

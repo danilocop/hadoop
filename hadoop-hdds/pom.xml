@@ -20,12 +20,12 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <parent>
     <groupId>org.apache.hadoop</groupId>
     <artifactId>hadoop-project</artifactId>
-    <version>3.2.1-SNAPSHOT</version>
+    <version>3.2.0</version>
     <relativePath/>
   </parent>
 
   <artifactId>hadoop-hdds</artifactId>
-  <version>0.4.0-SNAPSHOT</version>
+  <version>0.5.0-SNAPSHOT</version>
   <description>Apache Hadoop Distributed Data Store Project</description>
   <name>Apache Hadoop HDDS</name>
   <packaging>pom</packaging>
@@ -43,17 +43,19 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
 
   <properties>
     <!-- version for hdds/ozone components -->
-    <hdds.version>0.4.0-SNAPSHOT</hdds.version>
+    <hdds.version>0.5.0-SNAPSHOT</hdds.version>
 
     <!-- Apache Ratis version -->
-    <ratis.version>0.3.0-6f3419a-SNAPSHOT</ratis.version>
+    <ratis.version>0.4.0-8fed368-SNAPSHOT</ratis.version>
 
     <bouncycastle.version>1.60</bouncycastle.version>
 
     <protobuf-maven-plugin.version>0.5.1</protobuf-maven-plugin.version>
     <os-maven-plugin.version>1.5.0.Final</os-maven-plugin.version>
 
+    <maven-surefire-plugin.version>3.0.0-M1</maven-surefire-plugin.version>
 
+    <junit.jupiter.version>5.3.1</junit.jupiter.version>
   </properties>
   <repositories>
     <repository>
@@ -181,7 +183,19 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
         <version>${bouncycastle.version}</version>
       </dependency>
 
+      <dependency>
+        <groupId>org.junit.jupiter</groupId>
+        <artifactId>junit-jupiter-api</artifactId>
+        <version>${junit.jupiter.version}</version>
+        <scope>test</scope>
+      </dependency>
 
+      <dependency>
+        <groupId>com.google.code.findbugs</groupId>
+        <artifactId>findbugs</artifactId>
+        <version>3.0.1</version>
+        <scope>provided</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
   <dependencies>
@@ -196,6 +210,12 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-hdfs-client</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>com.squareup.okhttp</groupId>
+          <artifactId>okhttp</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
       <groupId>org.apache.hadoop</groupId>
@@ -277,6 +297,7 @@ http://maven.apache.org/xsd/maven-4.0.0.xsd">
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>findbugs-maven-plugin</artifactId>
+        <version>3.0.4</version>
         <configuration>
           <excludeFilterFile combine.self="override"></excludeFilterFile>
         </configuration>

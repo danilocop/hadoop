@@ -23,7 +23,6 @@ import org.apache.hadoop.hdds.scm.pipeline.Pipeline;
 import org.apache.hadoop.hdds.scm.pipeline.PipelineID;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeMetric;
 import org.apache.hadoop.hdds.scm.container.placement.metrics.SCMNodeStat;
-import org.apache.hadoop.hdds.scm.exceptions.SCMException;
 import org.apache.hadoop.hdds.scm.node.states.NodeNotFoundException;
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.protocol.proto.HddsProtos.NodeState;
@@ -40,17 +39,17 @@ import java.util.UUID;
 
 /**
  * A node manager supports a simple interface for managing a datanode.
- * <p/>
+ * <p>
  * 1. A datanode registers with the NodeManager.
- * <p/>
+ * <p>
  * 2. If the node is allowed to register, we add that to the nodes that we need
  * to keep track of.
- * <p/>
+ * <p>
  * 3. A heartbeat is made by the node at a fixed frequency.
- * <p/>
+ * <p>
  * 4. A node can be in any of these 4 states: {HEALTHY, STALE, DEAD,
  * DECOMMISSIONED}
- * <p/>
+ * <p>
  * HEALTHY - It is a datanode that is regularly heartbeating us.
  *
  * STALE - A datanode for which we have missed few heart beats.
@@ -94,8 +93,7 @@ public interface NodeManager extends StorageContainerNodeProtocol,
    * Return a map of node stats.
    * @return a map of individual node stats (live/stale but not dead).
    */
-  // TODO: try to change the return type to Map<DatanodeDetails, SCMNodeStat>
-  Map<UUID, SCMNodeStat> getNodeStats();
+  Map<DatanodeDetails, SCMNodeStat> getNodeStats();
 
   /**
    * Return the node stat of the specified datanode.
@@ -135,8 +133,8 @@ public interface NodeManager extends StorageContainerNodeProtocol,
    * Remaps datanode to containers mapping to the new set of containers.
    * @param datanodeDetails - DatanodeDetails
    * @param containerIds - Set of containerIDs
-   * @throws SCMException - if datanode is not known. For new datanode use
-   *                        addDatanodeInContainerMap call.
+   * @throws NodeNotFoundException - if datanode is not known. For new datanode
+   *                        use addDatanodeInContainerMap call.
    */
   void setContainers(DatanodeDetails datanodeDetails,
       Set<ContainerID> containerIds) throws NodeNotFoundException;
@@ -160,17 +158,11 @@ public interface NodeManager extends StorageContainerNodeProtocol,
   /**
    * Process node report.
    *
-   * @param dnUuid
+   * @param datanodeDetails
    * @param nodeReport
    */
-  void processNodeReport(DatanodeDetails dnUuid, NodeReportProto nodeReport);
-
-  /**
-   * Process a dead node event in this Node Manager.
-   *
-   * @param dnUuid datanode uuid.
-   */
-  void processDeadNode(UUID dnUuid);
+  void processNodeReport(DatanodeDetails datanodeDetails,
+                         NodeReportProto nodeReport);
 
   /**
    * Get list of SCMCommands in the Command Queue for a particular Datanode.

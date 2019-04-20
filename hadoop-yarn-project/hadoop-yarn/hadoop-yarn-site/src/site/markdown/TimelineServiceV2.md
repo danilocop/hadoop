@@ -142,7 +142,7 @@ New configuration parameters that are introduced with v.2 are marked bold.
 | **`yarn.timeline-service.timeline-client.number-of-async-entities-to-merge`** | Time line V2 client tries to merge these many number of async entities (if available) and then call the REST ATS V2 API to submit. Defaults to `10`. |
 | **`yarn.timeline-service.hbase.coprocessor.app-final-value-retention-milliseconds`** | The setting that controls how long the final value of a metric of a completed app is retained before merging into the flow sum. Defaults to `259200000` (3 days). This should be set in the HBase cluster. |
 | **`yarn.rm.system-metrics-publisher.emit-container-events`** | The setting that controls whether yarn container metrics is published to the timeline server or not by RM. This configuration setting is for ATS V2. Defaults to `false`. |
-
+| **`yarn.nodemanager.emit-container-events`** | The setting that controls whether yarn container metrics is published to the timeline server or not by NM. This configuration setting is for ATS V2. Defaults to `true`. |
 #### Security Configuration
 
 
@@ -252,18 +252,53 @@ For example,
 ```
 
 ##### <a name="Create_schema"> </a>Step 3) Create the timeline service schema
+The schema creation can be run on the hbase cluster which is going to store the timeline
+service tables. The schema creator tool requires both the timelineservice-hbase as well
+as the hbase-server jars. Hence, during schema creation, you need to ensure that the
+hbase classpath contains the yarn-timelineservice-hbase jar.
+
+On the hbase cluster, you can get it from hdfs since we placed it there for the
+coprocessor in the step above.
+
+```
+   hadoop fs -get /hbase/coprocessor/hadoop-yarn-server-timelineservice-hbase-client-${project.version}.jar <local-dir>/.
+   hadoop fs -get /hbase/coprocessor/hadoop-yarn-server-timelineservice-${project.version}.jar <local-dir>/.
+   hadoop fs -get /hbase/coprocessor/hadoop-yarn-server-timelineservice-hbase-common-${project.version}.jar <local-dir>/.
+```
+
+Next, add it to the hbase classpath as follows:
+
+```
+   export HBASE_CLASSPATH=$HBASE_CLASSPATH:/home/yarn/hadoop-current/share/hadoop/yarn/timelineservice/hadoop-yarn-server-timelineservice-hbase-client-${project.version}.jar
+   export HBASE_CLASSPATH=$HBASE_CLASSPATH:/home/yarn/hadoop-current/share/hadoop/yarn/timelineservice/hadoop-yarn-server-timelineservice-${project.version}.jar
+   export HBASE_CLASSPATH=$HBASE_CLASSPATH:/home/yarn/hadoop-current/share/hadoop/yarn/timelineservice/hadoop-yarn-server-timelineservice-hbase-common-${project.version}.jar
+```
+
 Finally, run the schema creator tool to create the necessary tables:
 
-    bin/hadoop org.apache.hadoop.yarn.server.timelineservice.storage.TimelineSchemaCreator -create
+```
+    bin/hbase org.apache.hadoop.yarn.server.timelineservice.storage.TimelineSchemaCreator -create
+```
 
 The `TimelineSchemaCreator` tool supports a few options that may come handy especially when you
 are testing. For example, you can use `-skipExistingTable` (`-s` for short) to skip existing tables
 and continue to create other tables rather than failing the schema creation. By default, the tables
 will have a schema prefix of "prod.". When no option or '-help' ('-h' for short) is provided, the
-command usage is printed.
-and continue to create other tables rather than failing the schema creation. When no option or '-help'
-('-h' for short) is provided, the command usage is printed. By default, the tables
-will have a schema prefix of "prod."
+command usage is printed. The options (-entityTableName, -appToflowTableName, -applicationTableName,
+-subApplicationTableName) will help to override the default table names. On using custom table names,
+The below corresponding configs with custom table name has to be set in hbase-site.xml configured
+at yarn.timeline-service.hbase.configuration.file.
+
+```
+yarn.timeline-service.app-flow.table.name
+yarn.timeline-service.entity.table.name
+yarn.timeline-service.application.table.name
+yarn.timeline-service.subapplication.table.name
+yarn.timeline-service.flowactivity.table.name
+yarn.timeline-service.flowrun.table.name
+yarn.timeline-service.domain.table.name
+
+```
 
 #### Enabling Timeline Service v.2
 Following are the basic configurations to start Timeline service v.2:
@@ -295,14 +330,22 @@ Following are the basic configurations to start Timeline service v.2:
   <name>yarn.system-metrics-publisher.enabled</name>
   <value>true</value>
 </property>
+```
 
-<property>
-  <description>The setting that controls whether yarn container events are
-  published to the timeline service or not by RM. This configuration setting
-  is for ATS V2.</description>
-  <name>yarn.rm.system-metrics-publisher.emit-container-events</name>
-  <value>true</value>
-</property>
+If using an aux services manifest instead of setting aux services through the Configuration, ensure that the manifest services array includes the timeline\_collector service as follows:
+```
+{
+  "services": [
+    {
+      "name": "timeline_collector",
+      "configuration": {
+        "properties": {
+          "class.name": "org.apache.hadoop.yarn.server.timelineservice.collector.PerNodeTimelineCollectorsAuxService"
+        }
+      }
+    }
+  ]
+}
 ```
 
 In addition, you may want to set the YARN cluster name to a reasonably unique value in case you

@@ -40,22 +40,25 @@ import java.util.Iterator;
 import org.apache.hadoop.hdds.client.ReplicationType;
 import org.apache.hadoop.ozone.client.OzoneBucket;
 import org.apache.hadoop.ozone.client.OzoneKey;
+import org.apache.hadoop.ozone.om.exceptions.OMException;
+import org.apache.hadoop.ozone.om.exceptions.OMException.ResultCodes;
 import org.apache.hadoop.ozone.s3.commontypes.KeyMetadata;
 import org.apache.hadoop.ozone.s3.endpoint.MultiDeleteRequest.DeleteObject;
 import org.apache.hadoop.ozone.s3.endpoint.MultiDeleteResponse.DeletedObject;
 import org.apache.hadoop.ozone.s3.endpoint.MultiDeleteResponse.Error;
 import org.apache.hadoop.ozone.s3.exception.OS3Exception;
 import org.apache.hadoop.ozone.s3.exception.S3ErrorTable;
+import org.apache.hadoop.ozone.s3.util.ContinueToken;
+import org.apache.hadoop.ozone.s3.util.S3StorageType;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 import org.apache.commons.lang3.StringUtils;
-import org.apache.hadoop.ozone.s3.util.S3StorageType;
-import org.apache.hadoop.ozone.s3.util.S3utils;
+
+import static org.apache.hadoop.ozone.s3.util.OzoneS3Util.getVolumeName;
+import static org.apache.hadoop.ozone.s3.util.S3Consts.ENCODING_TYPE;
 import org.apache.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import static org.apache.hadoop.ozone.s3.util.S3Consts.ENCODING_TYPE;
 
 /**
  * Bucket level rest endpoints.
@@ -74,6 +77,7 @@ public class BucketEndpoint extends EndpointBase {
    */
   @GET
   @SuppressFBWarnings
+  @SuppressWarnings("parameternumber")
   public Response list(
       @PathParam("bucket") String bucketName,
       @QueryParam("delimiter") String delimiter,
@@ -103,16 +107,17 @@ public class BucketEndpoint extends EndpointBase {
 
     Iterator<? extends OzoneKey> ozoneKeyIterator;
 
-    String decodedToken = S3utils.decodeContinueToken(continueToken);
+    ContinueToken decodedToken =
+        ContinueToken.decodeFromString(continueToken);
 
     if (startAfter != null && continueToken != null) {
       // If continuation token and start after both are provided, then we
       // ignore start After
-      ozoneKeyIterator = bucket.listKeys(prefix, decodedToken);
+      ozoneKeyIterator = bucket.listKeys(prefix, decodedToken.getLastKey());
     } else if (startAfter != null && continueToken == null) {
       ozoneKeyIterator = bucket.listKeys(prefix, startAfter);
     } else if (startAfter == null && continueToken != null){
-      ozoneKeyIterator = bucket.listKeys(prefix, decodedToken);
+      ozoneKeyIterator = bucket.listKeys(prefix, decodedToken.getLastKey());
     } else {
       ozoneKeyIterator = bucket.listKeys(prefix);
     }
@@ -129,6 +134,9 @@ public class BucketEndpoint extends EndpointBase {
     response.setContinueToken(continueToken);
 
     String prevDir = null;
+    if (continueToken != null) {
+      prevDir = decodedToken.getLastDir();
+    }
     String lastKey = null;
     int count = 0;
     while (ozoneKeyIterator.hasNext()) {
@@ -175,7 +183,8 @@ public class BucketEndpoint extends EndpointBase {
       response.setTruncated(false);
     } else if(ozoneKeyIterator.hasNext()) {
       response.setTruncated(true);
-      response.setNextToken(S3utils.generateContinueToken(lastKey));
+      ContinueToken nextToken = new ContinueToken(lastKey, prevDir);
+      response.setNextToken(nextToken.encodeToString());
     } else {
       response.setTruncated(false);
     }
@@ -189,9 +198,10 @@ public class BucketEndpoint extends EndpointBase {
   public Response put(@PathParam("bucket") String bucketName, @Context
       HttpHeaders httpHeaders) throws IOException, OS3Exception {
 
-    String userName = getAuthenticationHeaderParser().getAccessKeyID();
+    String volumeName = getVolumeName(getAuthenticationHeaderParser().
+        getAccessKeyID());
 
-    String location = createS3Bucket(userName, bucketName);
+    String location = createS3Bucket(volumeName, bucketName);
 
     LOG.info("Location is {}", location);
     return Response.status(HttpStatus.SC_OK).header("Location", location)
@@ -234,15 +244,13 @@ public class BucketEndpoint extends EndpointBase {
 
     try {
       deleteS3Bucket(bucketName);
-    } catch (IOException ex) {
-      if (ex.getMessage().contains("BUCKET_NOT_EMPTY")) {
-        OS3Exception os3Exception = S3ErrorTable.newError(S3ErrorTable
+    } catch (OMException ex) {
+      if (ex.getResult() == ResultCodes.BUCKET_NOT_EMPTY) {
+        throw S3ErrorTable.newError(S3ErrorTable
             .BUCKET_NOT_EMPTY, bucketName);
-        throw os3Exception;
-      } else if (ex.getMessage().contains("BUCKET_NOT_FOUND")) {
-        OS3Exception os3Exception = S3ErrorTable.newError(S3ErrorTable
+      } else if (ex.getResult() == ResultCodes.BUCKET_NOT_FOUND) {
+        throw S3ErrorTable.newError(S3ErrorTable
             .NO_SUCH_BUCKET, bucketName);
-        throw os3Exception;
       } else {
         throw ex;
       }
@@ -275,8 +283,8 @@ public class BucketEndpoint extends EndpointBase {
           if (!request.isQuiet()) {
             result.addDeleted(new DeletedObject(keyToDelete.getKey()));
           }
-        } catch (IOException ex) {
-          if (!ex.getMessage().contains("KEY_NOT_FOUND")) {
+        } catch (OMException ex) {
+          if (ex.getResult() != ResultCodes.KEY_NOT_FOUND) {
             result.addError(
                 new Error(keyToDelete.getKey(), "InternalError",
                     ex.getMessage()));

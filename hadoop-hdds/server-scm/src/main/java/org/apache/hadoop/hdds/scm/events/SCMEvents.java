@@ -21,6 +21,7 @@ package org.apache.hadoop.hdds.scm.events;
 
 import org.apache.hadoop.hdds.protocol.DatanodeDetails;
 import org.apache.hadoop.hdds.scm.block.PendingDeleteStatusList;
+import org.apache.hadoop.hdds.scm.safemode.SCMSafeModeManager.SafeModeStatus;
 import org.apache.hadoop.hdds.scm.command.CommandStatusReportHandler;
 import org.apache.hadoop.hdds.scm.command.CommandStatusReportHandler
     .ReplicationStatus;
@@ -40,6 +41,8 @@ import org.apache.hadoop.hdds.scm.server.SCMDatanodeHeartbeatDispatcher
 import org.apache.hadoop.hdds.scm.server.SCMDatanodeHeartbeatDispatcher
     .NodeReportFromDatanode;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager;
+import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager
+    .DeleteContainerCommandCompleted;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationManager
     .ReplicationCompleted;
 import org.apache.hadoop.hdds.scm.container.replication.ReplicationRequest;
@@ -100,6 +103,14 @@ public final class SCMEvents {
    */
   public static final TypedEvent<PipelineReportFromDatanode> PIPELINE_REPORT =
           new TypedEvent<>(PipelineReportFromDatanode.class, "Pipeline_Report");
+
+  /**
+   * PipelineReport processed by pipeline report handler. This event is
+   * received by HealthyPipelineSafeModeRule.
+   */
+  public static final TypedEvent<PipelineReportFromDatanode>
+      PROCESSED_PIPELINE_REPORT = new TypedEvent<>(
+          PipelineReportFromDatanode.class, "Processed_Pipeline_Report");
 
   /**
    * PipelineActions are sent by Datanode. This event is received by
@@ -167,6 +178,13 @@ public final class SCMEvents {
       new TypedEvent<>(DatanodeDetails.class, "Dead_Node");
 
   /**
+   * This event will be triggered whenever a datanode is moved from non-healthy
+   * state to healthy state.
+   */
+  public static final TypedEvent<DatanodeDetails> NON_HEALTHY_TO_HEALTHY_NODE =
+      new TypedEvent<>(DatanodeDetails.class, "NON_HEALTHY_TO_HEALTHY_NODE");
+
+  /**
    * This event will be triggered by CommandStatusReportHandler whenever a
    * status for Replication SCMCommand is received.
    */
@@ -204,6 +222,14 @@ public final class SCMEvents {
   public static final TypedEvent<ReplicationManager.ReplicationRequestToRepeat>
       TRACK_REPLICATE_COMMAND =
       new TypedEvent<>(ReplicationManager.ReplicationRequestToRepeat.class);
+
+  /**
+   * This event is sent by the ReplicaManager to the
+   * DeleteContainerCommandWatcher to track the in-progress delete commands.
+   */
+  public static final TypedEvent<ReplicationManager.DeletionRequestToRepeat>
+      TRACK_DELETE_CONTAINER_COMMAND =
+      new TypedEvent<>(ReplicationManager.DeletionRequestToRepeat.class);
   /**
    * This event comes from the Heartbeat dispatcher (in fact from the
    * datanode) to notify the scm that the replication is done. This is
@@ -216,6 +242,10 @@ public final class SCMEvents {
   public static final TypedEvent<ReplicationCompleted> REPLICATION_COMPLETE =
       new TypedEvent<>(ReplicationCompleted.class);
 
+  public static final TypedEvent<DeleteContainerCommandCompleted>
+      DELETE_CONTAINER_COMMAND_COMPLETE =
+      new TypedEvent<>(DeleteContainerCommandCompleted.class);
+
   /**
    * Signal for all the components (but especially for the replication
    * manager and container report handler) that the replication could be
@@ -224,8 +254,8 @@ public final class SCMEvents {
    */
   public static final TypedEvent<Boolean> START_REPLICATION =
       new TypedEvent<>(Boolean.class);
-  public static final TypedEvent<Boolean> CHILL_MODE_STATUS =
-      new TypedEvent<>(Boolean.class);
+  public static final TypedEvent<SafeModeStatus> SAFE_MODE_STATUS =
+      new TypedEvent<>(SafeModeStatus.class);
 
   /**
    * Private Ctor. Never Constructed.
